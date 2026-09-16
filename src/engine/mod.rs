@@ -334,7 +334,7 @@ impl Engine {
     // ---- parallel path ----
 
     fn run_ticks_parallel(&mut self, steps: u32, per_tick: &mut dyn FnMut(&TickReport, &dyn EngineView)) -> TickReport {
-        let T = self.cfg.n_threads;
+        let n_threads = self.cfg.n_threads;
         let n = self.substrate.n_neurons();
         let chunk_len = self.chunk_len;
         let decay_exc = (-self.cfg.dt_ms / self.cfg.tau_exc_ms).exp();
@@ -345,7 +345,7 @@ impl Engine {
             (self.cfg.v_rest, self.cfg.input_gain, self.cfg.v_thresh, self.cfg.v_reset, self.cfg.weight_scale, self.cfg.use_simd);
 
         let last_snap: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(std::mem::take(&mut self.last_spiked)));
-        let barriers: Vec<Arc<Barrier>> = (0..4).map(|_| Arc::new(Barrier::new(T))).collect();
+        let barriers: Vec<Arc<Barrier>> = (0..4).map(|_| Arc::new(Barrier::new(n_threads))).collect();
         let spikes_pool: Arc<Mutex<Vec<Vec<u32>>>> = Arc::new(Mutex::new(Vec::new()));
         let vsum_pool: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
 
@@ -360,14 +360,14 @@ impl Engine {
             let n_chunks = self.n_chunks;
 
             let mut handles = Vec::new();
-            for tid in 1..T {
+            for tid in 1..n_threads {
                 let (last_snap, barriers, spikes_pool, vsum_pool) =
                     (last_snap.clone(), barriers.clone(), spikes_pool.clone(), vsum_pool.clone());
                 let mut scratch = Scratch::new(n);
                 handles.push(s.spawn(move || {
                     for _ in 0..steps {
                         tick_phases(
-                            tid, T, n, chunk_len, n_chunks, substrate, polarity, g_exc, g_inh, v,
+                            tid, n_threads, n, chunk_len, n_chunks, substrate, polarity, g_exc, g_inh, v,
                             &last_snap, &barriers, &mut scratch,
                             decay_exc, decay_inh, a, rest, gain, thresh, reset, use_simd, w_scale,
                             &spikes_pool, &vsum_pool,
@@ -382,7 +382,7 @@ impl Engine {
             let mut local_t_ms = self.t_ms;
             for _ in 0..steps {
                 tick_phases(
-                    0, T, n, chunk_len, n_chunks, substrate, polarity, g_exc, g_inh, v,
+                    0, n_threads, n, chunk_len, n_chunks, substrate, polarity, g_exc, g_inh, v,
                     &last_snap, &barriers, &mut scratch,
                     decay_exc, decay_inh, a, rest, gain, thresh, reset, use_simd, w_scale,
                     &spikes_pool, &vsum_pool,

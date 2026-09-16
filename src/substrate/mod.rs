@@ -94,7 +94,7 @@ pub fn compile_flywire(data_dir: &Path, out_path: &Path, quant: Quant) -> std::i
     }
     let mut indices = vec![0u32; agg.len()];
     let mut cursor = indptr.clone();
-    for (p, q, s) in &agg {
+    for (p, q, _s) in &agg {
         let c = cursor[*p as usize] as usize;
         indices[c] = *q;
         cursor[*p as usize] += 1;
