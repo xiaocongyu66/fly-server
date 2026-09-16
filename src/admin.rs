@@ -15,9 +15,9 @@ const TOKEN_TTL: Duration = Duration::from_secs(24 * 3600);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKey {
-    pub id: String, // "key_<short>"
-    #[serde(skip_serializing)]
-    pub secret: String, // "fly_sk_<hex>" — only shown once at creation
+    pub id: String,     // "key_<short>"
+    pub secret: String, // "fly_sk_<hex>" — only shown once at creation;
+                        // list_keys() projects to KeyView which omits it
     pub name: String,
     pub created_at: u64,
     pub enabled: bool,
