@@ -92,6 +92,48 @@ fn status_text(code: u16) -> &'static str {
     }
 }
 
+fn mime_of(path: &str) -> &'static str {
+    match path.rsplit('.').next() {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "application/javascript; charset=utf-8",
+        Some("wasm") => "application/wasm",
+        Some("css") => "text/css; charset=utf-8",
+        Some("json") => "application/json",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("ico") => "image/x-icon",
+        Some("map") => "application/json",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Serve a file from `root`, with SPA fallback to index.html. Path is
+/// sanitized: `..` components are rejected before touching the filesystem.
+pub fn serve_static(root: &std::path::Path, path: &str) -> Option<HttpResponse> {
+    let rel = path.trim_start_matches('/');
+    let rel = if rel.is_empty() { "index.html" } else { rel };
+    if rel.split('/').any(|seg| seg == "..") {
+        return None;
+    }
+    let full = root.join(rel);
+    let full = if full.is_dir() { full.join("index.html") } else { full };
+    match std::fs::read(&full) {
+        Ok(bytes) => Some(HttpResponse {
+            status: 200,
+            content_type: mime_of(&full.to_string_lossy()),
+            body: Body::Bytes(bytes),
+        }),
+        Err(_) => {
+            // SPA fallback: client-side routes resolve to index.html
+            std::fs::read(root.join("index.html")).ok().map(|bytes| HttpResponse {
+                status: 200,
+                content_type: "text/html; charset=utf-8",
+                body: Body::Bytes(bytes),
+            })
+        }
+    }
+}
+
 fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<HttpRequest>> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut line = String::new();

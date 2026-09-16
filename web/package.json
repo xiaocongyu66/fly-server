@@ -1,0 +1,9 @@
+{
+  "name": "fly-admin-web",
+  "private": true,
+  "devDependencies": {
+    "tailwindcss": "^4",
+    "@tailwindcss/cli": "^4",
+    "tw-animate-css": "^1"
+  }
+}

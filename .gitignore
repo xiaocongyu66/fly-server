@@ -4,3 +4,6 @@ substrate.flybin
 sp/
 sub_u8.flybin
 sub_f32.flybin
+web/target/
+web/node_modules/
+web/dist/

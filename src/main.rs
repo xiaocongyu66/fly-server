@@ -146,6 +146,7 @@ fn cmd_serve(args: &[String]) -> i32 {
         }
     };
     let port: u16 = flag(args, "--port").and_then(|p| p.parse().ok()).unwrap_or(8000);
+    let admin_dist = flag(args, "--admin-dist").map(PathBuf::from);
     let cfg = parse_engine_cfg(args);
     let substrate = match substrate::load(&substrate_path) {
         Ok(s) => Arc::new(s),
@@ -162,7 +163,7 @@ fn cmd_serve(args: &[String]) -> i32 {
         "fly-server {} — substrate \"{}\": {} neurons, {} edges, threads={}, simd={}, listening on port {}",
         fly_server::VERSION, substrate_id, substrate.n_neurons(), substrate.header.n_edges, cfg.n_threads, cfg.use_simd, port
     );
-    match api::run_server(substrate, substrate_id, port, cfg) {
+    match api::run_server(substrate, substrate_id, port, cfg, admin_dist) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("error: {e}");

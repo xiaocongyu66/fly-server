@@ -16,9 +16,19 @@ pub fn run_server(
     substrate_id: String,
     port: u16,
     engine_cfg: crate::engine::EngineConfig,
+    admin_dist: Option<std::path::PathBuf>,
 ) -> std::io::Result<()> {
     let mgr = Arc::new(SessionManager::new(substrate, substrate_id, engine_cfg));
-    http::serve(port, move |req| route(&mgr, req))
+    http::serve(port, move |req| {
+        if let Some(dist) = &admin_dist {
+            if req.method == "GET" && !req.path.starts_with("/v1/") && req.path != "/health" {
+                if let Some(resp) = http::serve_static(dist, &req.path) {
+                    return resp;
+                }
+            }
+        }
+        route(&mgr, req)
+    })
 }
 
 fn route(mgr: &SessionManager, req: &HttpRequest) -> HttpResponse {

@@ -1,0 +1,15 @@
+[application]
+name = "fly-admin"
+default_platform = "web"
+
+[web.app]
+title = "fly-admin"
+
+[web.resource]
+style = ["/assets/main.css"]
+
+[web.resource.dev]
+js = []
+
+[web.watcher]
+watch_path = ["src"]
