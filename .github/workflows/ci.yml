@@ -63,4 +63,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: fly-admin-web
-          path: web/target/dx/fly-admin/release/web/public/
+          path: target/dx/fly-admin/release/web/public/
