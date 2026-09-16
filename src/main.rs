@@ -1,4 +1,4 @@
-use fly_server::substrate;
+use fly_server::{api, substrate};
 use std::path::PathBuf;
 
 fn main() {
@@ -63,20 +63,26 @@ fn cmd_serve(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let _port: u16 = flag(args, "--port").and_then(|p| p.parse().ok()).unwrap_or(8000);
-    match substrate::load(&substrate_path) {
-        Ok(s) => {
-            eprintln!(
-                "loaded substrate: {} neurons, {} edges from {}",
-                s.n_neurons(),
-                s.header.n_edges,
-                s.header.source
-            );
-            eprintln!("serve: HTTP layer not yet implemented in this build");
-            0
-        }
+    let port: u16 = flag(args, "--port").and_then(|p| p.parse().ok()).unwrap_or(8000);
+    let substrate = match substrate::load(&substrate_path) {
+        Ok(s) => std::sync::Arc::new(s),
         Err(e) => {
             eprintln!("error loading substrate: {e}");
+            return 1;
+        }
+    };
+    let substrate_id = substrate_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "substrate".into());
+    eprintln!(
+        "fly-server {} — substrate \"{}\": {} neurons, {} edges, listening on port {}",
+        fly_server::VERSION, substrate_id, substrate.n_neurons(), substrate.header.n_edges, port
+    );
+    match api::run_server(substrate, substrate_id, port) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("error: {e}");
             1
         }
     }

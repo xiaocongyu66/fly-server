@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 // ---------- sessions ----------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionObject {
     pub id: String, // "sess_..."
     pub object: String, // "session"
@@ -38,7 +38,7 @@ pub struct UpdateSessionRequest {
 // ---------- neuron selectors ----------
 
 /// Select neurons by root id list or by metadata class. Root ids win if both given.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct NeuronSelector {
     #[serde(default)]
     pub ids: Vec<u64>,

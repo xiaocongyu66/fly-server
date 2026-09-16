@@ -197,7 +197,7 @@ impl Engine {
     pub fn inject(&mut self, neurons: &[u32], current: f32) {
         for &i in neurons {
             if (i as usize) < self.v.len() {
-                self.v[i] += current;
+                self.v[i as usize] += current;
             }
         }
     }
@@ -212,5 +212,77 @@ impl Engine {
     }
     pub fn sim_time_ms(&self) -> f32 {
         self.t_ms
+    }
+
+    /// Membrane potential of neuron `i` (for readout rate computation).
+    pub fn membrane(&self, i: usize) -> f32 {
+        self.v.get(i).copied().unwrap_or(0.0)
+    }
+
+    /// Serialize simulation state for snapshotting (fork reuse).
+    pub fn state_bytes(&self) -> Vec<u8> {
+        let mut b = Vec::with_capacity(4 * 8 + self.v.len() * 12 + self.last_spiked.len() * 4 + 16);
+        for f in [&self.v, &self.g_exc, &self.g_inh] {
+            b.extend_from_slice(&(f.len() as u64).to_le_bytes());
+            for x in f {
+                b.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+        b.extend_from_slice(&(self.last_spiked.len() as u64).to_le_bytes());
+        for x in &self.last_spiked {
+            b.extend_from_slice(&x.to_le_bytes());
+        }
+        b.extend_from_slice(&self.tick.to_le_bytes());
+        b.extend_from_slice(&self.t_ms.to_le_bytes());
+        b.extend_from_slice(&self.spikes_last.to_le_bytes());
+        b
+    }
+
+    /// Restore state from `state_bytes`. Lengths must match the substrate.
+    pub fn restore_state(&mut self, b: &[u8]) -> Result<(), String> {
+        let mut off = 0usize;
+        let read_f32s = |b: &[u8], off: &mut usize, len: usize| -> Result<Vec<f32>, String> {
+            let need = len * 4;
+            if b.len() < *off + need {
+                return Err("truncated state".into());
+            }
+            let v: Vec<f32> = b[*off..*off + need]
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
+            *off += need;
+            Ok(v)
+        };
+        let n = self.v.len();
+        let v = read_f32s(b, &mut off, n)?;
+        let g_exc = read_f32s(b, &mut off, n)?;
+        let g_inh = read_f32s(b, &mut off, n)?;
+        if b.len() < off + 8 {
+            return Err("truncated state".into());
+        }
+        let ns = u64::from_le_bytes(b[off..off + 8].try_into().unwrap()) as usize;
+        off += 8;
+        if b.len() < off + ns * 4 {
+            return Err("truncated state".into());
+        }
+        let last_spiked: Vec<u32> = b[off..off + ns * 4]
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        off += ns * 4;
+        if b.len() < off + 20 {
+            return Err("truncated state".into());
+        }
+        let tick = u64::from_le_bytes(b[off..off + 8].try_into().unwrap());
+        let t_ms = f32::from_le_bytes(b[off + 8..off + 12].try_into().unwrap());
+        let spikes_last = u32::from_le_bytes(b[off + 12..off + 16].try_into().unwrap());
+        self.v = v;
+        self.g_exc = g_exc;
+        self.g_inh = g_inh;
+        self.last_spiked = last_spiked;
+        self.tick = tick;
+        self.t_ms = t_ms;
+        self.spikes_last = spikes_last;
+        Ok(())
     }
 }
