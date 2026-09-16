@@ -11,8 +11,13 @@ use crate::substrate::Substrate;
 use crate::types::*;
 use http::{Body, HttpRequest, HttpResponse};
 
-pub fn run_server(substrate: Arc<Substrate>, substrate_id: String, port: u16) -> std::io::Result<()> {
-    let mgr = Arc::new(SessionManager::new(substrate, substrate_id));
+pub fn run_server(
+    substrate: Arc<Substrate>,
+    substrate_id: String,
+    port: u16,
+    engine_cfg: crate::engine::EngineConfig,
+) -> std::io::Result<()> {
+    let mgr = Arc::new(SessionManager::new(substrate, substrate_id, engine_cfg));
     http::serve(port, move |req| route(&mgr, req))
 }
 
@@ -137,7 +142,7 @@ mod tests {
             },
             indptr: vec![0, 1, 1],
             indices: vec![1],
-            weights: vec![50.0],
+            weights: crate::substrate::flybin::Weights::F32(vec![50.0]),
             root_ids: vec![100, 200],
             region: vec![1, 2],
             cell_type: vec![0, 0],
@@ -157,7 +162,7 @@ mod tests {
 
     #[test]
     fn health_and_models() {
-        let mgr = SessionManager::new(mini(), "test-substrate".into());
+        let mgr = SessionManager::new(mini(), "test-substrate".into(), crate::engine::EngineConfig::default());
         let r = route(&mgr, &req("GET", "/health", ""));
         assert_eq!(r.status, 200);
         let r = route(&mgr, &req("GET", "/v1/models", ""));
@@ -168,7 +173,7 @@ mod tests {
 
     #[test]
     fn create_and_step() {
-        let mgr = SessionManager::new(mini(), "test-substrate".into());
+        let mgr = SessionManager::new(mini(), "test-substrate".into(), crate::engine::EngineConfig::default());
         let r = route(&mgr, &req("POST", "/v1/sessions", r#"{"substrate":"test-substrate"}"#));
         assert_eq!(r.status, 200);
         let Body::Bytes(b) = r.body else { panic!() };

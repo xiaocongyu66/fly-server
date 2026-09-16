@@ -1,12 +1,15 @@
 //! `.flybin` — compiled substrate format (the "GGUF" of a connectome).
 //!
-//! Layout (little-endian):
+//! v2 layout (little-endian):
 //!   [0..8)    magic `FLYBIN\x01\x00`
 //!   [8..12)   u32 header length
 //!   [12..12+H) UTF-8 JSON header: {version, n_neurons, n_edges, string_tables}
 //!   then:     u64  indptr[n+1]
 //!             u32  indices[nnz]
-//!             f32  weights[nnz]          (raw syn_count)
+//!             u8   weights[nnz]          (syn_count quantized per-row; exact
+//!                                         for rows whose max count <= 255,
+//!                                         which is 99.99% of the dataset)
+//!             f32  row_scale[n]          (dequant: count = w * row_scale[row])
 //!             u64  root_ids[n]
 //!             u32  region[n]   ┐ indices into string tables
 //!             u32  cell_type[n]│
@@ -31,12 +34,41 @@ pub struct StringTables {
     pub nt_types: Vec<String>,
 }
 
+/// Weight storage: quantized u8 (v2, ~4x smaller) or exact f32 (v1).
+#[derive(Debug)]
+pub enum Weights {
+    /// Exact syn_count per edge.
+    F32(Vec<f32>),
+    /// syn_count quantized per-row: count = u8_value * row_scale[row].
+    /// Exact for rows whose max count <= 255 (99.99% of FlyWire).
+    U8 { w: Vec<u8>, scale: Vec<f32> },
+}
+
+/// Zero-allocation outgoing-edges iterator.
+pub enum OutgoingIter<'a> {
+    F32(std::iter::Zip<std::slice::Iter<'a, u32>, std::slice::Iter<'a, f32>>),
+    U8(
+        std::iter::Zip<std::slice::Iter<'a, u32>, std::slice::Iter<'a, u8>>,
+        f32,
+    ),
+}
+
+impl Iterator for OutgoingIter<'_> {
+    type Item = (u32, f32);
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            OutgoingIter::F32(it) => it.next().map(|(&i, &v)| (i, v)),
+            OutgoingIter::U8(it, s) => it.next().map(|(&i, &v)| (i, v as f32 * *s)),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Substrate {
     pub header: FlybinHeader,
     pub indptr: Vec<u64>,
     pub indices: Vec<u32>,
-    pub weights: Vec<f32>,
+    pub weights: Weights,
     pub root_ids: Vec<u64>,
     pub region: Vec<u32>,
     pub cell_type: Vec<u32>,
@@ -52,13 +84,19 @@ impl Substrate {
         self.indptr[pre] as usize..self.indptr[pre + 1] as usize
     }
 
-    /// Post-synaptic partners and weights of `pre`.
-    pub fn outgoing(&self, pre: usize) -> impl Iterator<Item = (u32, f32)> + '_ {
+    /// Post-synaptic partners and dequantized weights of `pre`.
+    /// Zero-allocation: concrete enum instead of Box<dyn Iterator> so the
+    /// scatter hot path never touches the heap.
+    pub fn outgoing(&self, pre: usize) -> OutgoingIter<'_> {
         let range = self.edges(pre);
-        self.indices[range.clone()]
-            .iter()
-            .zip(&self.weights[range])
-            .map(|(&i, &w)| (i, w))
+        let (start, end) = (range.start, range.end);
+        match &self.weights {
+            Weights::F32(w) => OutgoingIter::F32(self.indices[start..end].iter().zip(w[start..end].iter())),
+            Weights::U8 { w, scale } => {
+                let s = scale[pre];
+                OutgoingIter::U8(self.indices[start..end].iter().zip(w[start..end].iter()), s)
+            }
+        }
     }
 }
 
@@ -76,8 +114,18 @@ pub fn write_flybin(path: &std::path::Path, s: &Substrate) -> std::io::Result<()
     for v in &s.indices {
         out.write_all(&v.to_le_bytes())?;
     }
-    for v in &s.weights {
-        out.write_all(&v.to_le_bytes())?;
+    match &s.weights {
+        Weights::F32(w) => {
+            for v in w {
+                out.write_all(&v.to_le_bytes())?;
+            }
+        }
+        Weights::U8 { w, scale } => {
+            out.write_all(w)?;
+            for v in scale {
+                out.write_all(&v.to_le_bytes())?;
+            }
+        }
     }
     for v in &s.root_ids {
         out.write_all(&v.to_le_bytes())?;
@@ -120,7 +168,20 @@ pub fn read_flybin(path: &std::path::Path) -> std::io::Result<Substrate> {
 
     let indptr = cast_u64(&read_vec((n + 1) * 8)?)?;
     let indices = cast_u32(&read_vec(nnz * 4)?)?;
-    let weights = cast_f32(&read_vec(nnz * 4)?)?;
+    let weights = match header.format_version {
+        1 => Weights::F32(cast_f32(&read_vec(nnz * 4)?)?),
+        2 => {
+            let w = read_vec(nnz)?;
+            let scale = cast_f32(&read_vec(n * 4)?)?;
+            Weights::U8 { w, scale }
+        }
+        v => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unsupported flybin format_version {v} (recompile the substrate)"),
+            ))
+        }
+    };
     let root_ids = cast_u64(&read_vec(n * 8)?)?;
     let region = cast_u32(&read_vec(n * 4)?)?;
     let cell_type = cast_u32(&read_vec(n * 4)?)?;

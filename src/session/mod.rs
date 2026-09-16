@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::engine::{Engine, EngineConfig};
+use crate::engine::{Engine, EngineConfig, TickReport};
 use crate::error::{ApiError, ApiResult};
 use crate::substrate::Substrate;
 use crate::types::*;
@@ -56,11 +56,11 @@ pub struct SessionManager {
 }
 
 impl SessionManager {
-    pub fn new(substrate: Arc<Substrate>, substrate_id: String) -> Self {
+    pub fn new(substrate: Arc<Substrate>, substrate_id: String, engine_cfg: EngineConfig) -> Self {
         Self {
             substrate,
             substrate_id,
-            engine_cfg: EngineConfig::default(),
+            engine_cfg,
             sessions: Mutex::new(HashMap::new()),
             snapshots: Mutex::new(snapshot::SnapshotStore::new(8)),
             snapshot_every: 100,
@@ -221,26 +221,34 @@ impl SessionManager {
     pub fn step(&self, id: &str, req: StepRequest) -> ApiResult<StepResponse> {
         let steps = req.steps.clamp(1, 10_000);
         let v_thresh = self.engine_cfg.v_thresh;
+        let snapshot_every = self.snapshot_every;
+        let substrate = self.substrate.clone();
         let mut sessions = self.sessions.lock().unwrap();
         let s = sessions.get_mut(id).ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
 
-        let mut last_report = None;
+        // split borrows: engine goes into run_ticks, the rest stay callable
+        let SessionState { engine, log, usage, subscribers, .. } = s;
+
         let mut actions: Vec<Action> = Vec::new();
-        for _ in 0..steps {
-            let report = s.engine.tick();
+        let mut last_report: Option<TickReport> = None;
+        engine.run_ticks(steps, &mut |report, view| {
             // Motor readout: spiking VNC neurons, rate from membrane potential.
             actions.clear();
-            let sub = &self.substrate;
-            for &i in s.engine.last_spikes() {
-                let region = sub.header.string_tables.regions[sub.region[i as usize] as usize].clone();
+            for &i in view.spikes() {
+                let region = substrate.header.string_tables.regions[substrate.region[i as usize] as usize].clone();
                 if region.to_lowercase().contains("vnc") {
-                    let rate = (s.engine.membrane(i as usize) / v_thresh).clamp(0.0, 1.0);
-                    actions.push(Action { neuron_id: sub.root_ids[i as usize], rate });
+                    let rate = (view.membrane(i as usize) / v_thresh).clamp(0.0, 1.0);
+                    actions.push(Action { neuron_id: substrate.root_ids[i as usize], rate });
                 }
             }
             actions.sort_by(|a, b| b.rate.partial_cmp(&a.rate).unwrap_or(std::cmp::Ordering::Equal));
             actions.truncate(32);
-            let tick = report.tick;
+
+            if snapshot_every > 0 && report.tick % snapshot_every == 0 {
+                let blob = view.state_bytes();
+                usage.snapshot_writes += 1;
+                self.snapshots.lock().unwrap().put(id, report.tick, blob);
+            }
             let event = ActivityEvent {
                 session_id: id.to_string(),
                 tick: report.tick,
@@ -248,20 +256,14 @@ impl SessionManager {
                 n_spikes: report.n_spikes,
                 spike_sample: actions.iter().map(|a| a.neuron_id).collect(),
             };
-            last_report = Some(report);
-
-            if self.snapshot_every > 0 && tick % self.snapshot_every == 0 {
-                let blob = s.engine.state_bytes();
-                s.usage.snapshot_writes += 1;
-                self.snapshots.lock().unwrap().put(id, tick, blob);
-            }
-            s.subscribers.retain(|tx| tx.send(event.clone()).is_ok());
-        }
+            subscribers.retain(|tx| tx.send(event.clone()).is_ok());
+            last_report = Some(report.clone());
+        });
         let report = last_report.ok_or_else(|| ApiError::internal("no tick executed"))?;
-        s.usage.ticks_simulated += steps as u64;
+        usage.ticks_simulated += steps as u64;
 
         let body = serde_json::json!({"tick": report.tick, "n_spikes": report.n_spikes, "actions": actions});
-        s.log.append(id, "step", report.tick, body);
+        log.append(id, "step", report.tick, body);
 
         Ok(StepResponse {
             object: "session.step".into(),
@@ -269,9 +271,9 @@ impl SessionManager {
             tick: report.tick,
             t_ms: report.t_ms,
             n_spikes: report.n_spikes,
-            actions: actions.clone(),
+            actions,
             previous_tick_id: None,
-            usage: s.usage.clone(),
+            usage: usage.clone(),
         })
     }
 
@@ -354,7 +356,7 @@ mod tests {
             header,
             indptr: vec![0, 1, 1],
             indices: vec![1],
-            weights: vec![50.0],
+            weights: crate::substrate::flybin::Weights::F32(vec![50.0]),
             root_ids: vec![100, 200],
             region: vec![1, 2],
             cell_type: vec![0, 0],
@@ -364,7 +366,7 @@ mod tests {
     }
 
     fn mgr() -> SessionManager {
-        let mut m = SessionManager::new(mini_substrate(), "test-substrate".into());
+        let mut m = SessionManager::new(mini_substrate(), "test-substrate".into(), crate::engine::EngineConfig::default());
         m.snapshot_every = 1;
         m
     }

@@ -112,7 +112,7 @@ mod tests {
             },
             indptr: vec![0, 1, 1],
             indices: vec![1],
-            weights: vec![50.0],
+            weights: crate::substrate::flybin::Weights::F32(vec![50.0]),
             root_ids: vec![100, 200],
             region: vec![1, 2],
             cell_type: vec![0, 0],
