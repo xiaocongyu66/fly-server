@@ -78,9 +78,12 @@ impl Default for GainModulation {
     }
 }
 
+/// Factory that instantiates a readout adapter.
+type ReadoutFactory = fn() -> Box<dyn Readout>;
+
 /// Adapter registry: id -> readout instance.
 pub struct AdapterRegistry {
-    factories: Vec<(&'static str, fn() -> Box<dyn Readout>)>,
+    factories: Vec<(&'static str, ReadoutFactory)>,
 }
 
 impl AdapterRegistry {

@@ -21,6 +21,7 @@ pub fn decay(buf: &mut [f32], k: f32) {
 /// v = v + (rest - v)*a + gain*(ge - gi), then threshold/reset.
 /// Returns (spike indices, sum of v after reset). Order matches the
 /// original scalar loop exactly.
+#[allow(clippy::too_many_arguments)]
 pub fn integrate(
     v: &mut [f32],
     g_exc: &[f32],
@@ -74,6 +75,7 @@ pub mod neon {
     /// with no fma, so rounding order matches scalar mul/add exactly).
     /// The returned sum accumulates in 4 lanes first — its rounding order
     /// differs from the scalar loop, so only `v`/spikes are replay-stable.
+    #[allow(clippy::too_many_arguments)]
     pub fn integrate(
         v: &mut [f32],
         g_exc: &[f32],
@@ -132,6 +134,7 @@ pub mod neon {
 }
 
 #[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 mod tests {
     use super::*;
 

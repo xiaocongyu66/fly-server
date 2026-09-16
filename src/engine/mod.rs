@@ -151,7 +151,7 @@ impl Scratch {
             lex: vec![0.0; n],
             lin: vec![0.0; n],
             touched: Vec::with_capacity(4096),
-            bitmap: vec![0u64; (n + 63) / 64],
+            bitmap: vec![0u64; n.div_ceil(64)],
         }
     }
     fn reset(&mut self) {
@@ -178,7 +178,7 @@ impl Engine {
     pub fn new(substrate: Arc<Substrate>, mut cfg: EngineConfig) -> Self {
         let n = substrate.n_neurons();
         let n_threads = cfg.n_threads.max(1).min(n.max(1));
-        let chunk_len = (n + n_threads - 1) / n_threads;
+        let chunk_len = n.div_ceil(n_threads);
         cfg.n_threads = n_threads;
         // Neuron polarity: the presynaptic neuron's NT decides whether its
         // outgoing synapses excite or inhibit. Unknown NTs default excitatory.
@@ -564,7 +564,7 @@ impl Engine {
             return Err("truncated state".into());
         }
         self.last_spiked = b[off..off + ns * 4]
-            .chunks_exact(4)
+            .as_chunks::<4>().0.iter()
             .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
         off += ns * 4;
@@ -630,7 +630,7 @@ fn tick_phases(
     {
         let snap = last_snap.lock().unwrap();
         let total = snap.len();
-        let blk = (total + t_total - 1) / t_total;
+        let blk = total.div_ceil(t_total);
         let begin = (tid * blk).min(total);
         let end = ((tid + 1) * blk).min(total);
         scratch.reset();

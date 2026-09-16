@@ -106,7 +106,7 @@ impl Substrate {
 pub fn write_flybin(path: &std::path::Path, s: &Substrate) -> std::io::Result<()> {
     use std::io::Write;
     let header_json = serde_json::to_vec(&s.header)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        .map_err(std::io::Error::other)?;
     let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
     out.write_all(&MAGIC)?;
     out.write_all(&(header_json.len() as u32).to_le_bytes())?;
@@ -215,6 +215,7 @@ fn cast_f32(v: &[u8]) -> std::io::Result<Vec<f32>> {
     bytemuck_try(v)
 }
 
+#[allow(clippy::chunks_exact_to_as_chunks)]
 fn bytemuck_try<T: FromLeBytesSafe + Copy>(v: &[u8]) -> std::io::Result<Vec<T>> {
     let chunks = v.chunks_exact(std::mem::size_of::<T>());
     if !chunks.remainder().is_empty() {

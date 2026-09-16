@@ -46,7 +46,7 @@ pub fn run_server(
     })
 }
 
-fn bearer<'a>(req: &'a HttpRequest) -> Option<&'a str> {
+fn bearer(req: &HttpRequest) -> Option<&str> {
     // header first, then query token (SSE EventSource cannot set headers)
     if let Some((_, v)) = req.headers.iter().find(|(k, _)| k == "authorization") {
         if let Some(t) = v
@@ -355,7 +355,7 @@ mod tests {
             std::path::PathBuf::from("/tmp/test_keys2.json"),
         );
         let key = admin.create_key("t");
-        let mut authed = |method: &str, path: &str, body: &str| {
+        let authed = |method: &str, path: &str, body: &str| {
             let mut rq = req(method, path, body);
             rq.headers
                 .push(("authorization".into(), format!("Bearer {}", key.secret)));

@@ -154,7 +154,7 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<HttpRequest>> 
     if reader.read_line(&mut line)? == 0 {
         return Ok(None); // EOF
     }
-    let mut parts = line.trim_end().split_whitespace();
+    let mut parts = line.split_whitespace();
     let method = parts
         .next()
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "no method"))?

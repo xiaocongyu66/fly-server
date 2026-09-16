@@ -55,14 +55,6 @@ pub struct AdminStore {
     store_path: std::path::PathBuf,
 }
 
-fn sha256_hex(data: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(data);
-    let out = h.finalize();
-    out.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 fn rand_hex(n_bytes: usize) -> String {
     let mut buf = vec![0u8; n_bytes];
     getrandom::getrandom(&mut buf).expect("system RNG unavailable");
@@ -150,7 +142,7 @@ impl AdminStore {
 
     pub fn create_key(&self, name: &str) -> ApiKey {
         let key = ApiKey {
-            id: format!("key_{}", &rand_hex(4)),
+            id: format!("key_{}", rand_hex(4)),
             secret: format!("fly_sk_{}", rand_hex(24)),
             name: name.to_string(),
             created_at: now_secs(),
@@ -184,7 +176,7 @@ impl AdminStore {
                 usage: usage.get(&k.id).cloned().unwrap_or_default(),
             })
             .collect();
-        out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        out.sort_by_key(|k| std::cmp::Reverse(k.created_at));
         out
     }
 
@@ -221,6 +213,7 @@ impl AdminStore {
         self.verify_key(bearer).map(|id| ("key".into(), Some(id)))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn record_usage(
         &self,
         key_id: Option<&str>,
