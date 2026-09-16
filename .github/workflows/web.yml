@@ -1,0 +1,42 @@
+name: Web admin build
+
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", "third_party/**"]
+  workflow_dispatch:
+
+jobs:
+  web:
+    # x86_64 only: dx downloads wasm-bindgen-cli which has no aarch64-linux
+    # official release; the wasm artifact itself is platform-independent.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dx
+        run: |
+          curl -sL -o /tmp/dx.tar.gz \
+            https://github.com/DioxusLabs/dioxus/releases/latest/download/dx-x86_64-unknown-linux-gnu.tar.gz
+          tar xzf /tmp/dx.tar.gz -C /usr/local/bin
+          dx --version
+      - name: Tailwind CSS
+        working-directory: web
+        run: |
+          npm install
+          npx @tailwindcss/cli -i tailwind.css -o assets/main.css --minify
+          mkdir -p public/assets
+          cp assets/main.css public/assets/main.css
+      - name: dx build (wasm)
+        working-directory: web
+        run: dx build --platform web --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fly-admin-web
+          path: web/target/dx/fly-admin/release/web/public/

@@ -70,15 +70,27 @@ impl SessionManager {
     pub fn models(&self) -> ModelsResponse {
         ModelsResponse {
             object: "list".into(),
-            data: vec![serde_json::to_value(SubstrateObject {
-                id: self.substrate_id.clone(),
-                object: "substrate".into(),
-                n_neurons: self.substrate.header.n_neurons,
-                n_edges: self.substrate.header.n_edges,
-                source: self.substrate.header.source.clone(),
-            })
-            .unwrap_or_default()],
+            data: vec![serde_json::json!({
+                "id": &self.substrate_id,
+                "object": "substrate",
+                "n_neurons": self.substrate.header.n_neurons,
+                "n_edges": self.substrate.header.n_edges,
+                "source": &self.substrate.header.source,
+                "regions": &self.substrate.header.string_tables.regions,
+                "cell_types": &self.substrate.header.string_tables.cell_types,
+                "nt_types": &self.substrate.header.string_tables.nt_types,
+            })],
         }
+    }
+
+    /// Session summaries for the admin UI list view.
+    pub fn list(&self) -> Vec<SessionObject> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .values()
+            .map(|s| Self::to_object(s, &[]))
+            .collect()
     }
 
     pub fn create(&self, req: CreateSessionRequest) -> ApiResult<SessionObject> {

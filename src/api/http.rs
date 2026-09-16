@@ -210,11 +210,11 @@ fn write_response(stream: &mut TcpStream, resp: &HttpResponse) -> std::io::Resul
     }
 }
 
-pub fn serve<F>(port: u16, handler: F) -> std::io::Result<()>
+pub fn serve<F>(host: &str, port: u16, handler: F) -> std::io::Result<()>
 where
     F: Fn(&HttpRequest) -> HttpResponse + Send + Sync + 'static,
 {
-    let listener = TcpListener::bind(("127.0.0.1", port))?;
+    let listener = TcpListener::bind((host, port))?;
     let handler = Arc::new(handler);
     for stream in listener.incoming() {
         let mut stream = match stream {
