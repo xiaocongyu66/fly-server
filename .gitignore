@@ -7,3 +7,5 @@ sub_f32.flybin
 web/target/
 web/node_modules/
 web/dist/
+web/assets/main.css
+web/public/
