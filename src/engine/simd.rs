@@ -1,7 +1,14 @@
 //! Vectorized hot-loop kernels (P0-2): aarch64 NEON f32x4 with a scalar
-//! fallback. Operation order is identical between paths (mul/add chains,
-//! no fma) so results are bit-identical — replays stay deterministic
-//! regardless of the SIMD switch.
+//! fallback.
+//!
+//! Determinism guarantee, split precisely:
+//! - `v` (membrane potentials) and the spike indices ARE bit-identical
+//!   between paths (same mul/add order, no fma; threshold decided by
+//!   scalar re-read of the stored value).
+//! - The returned `sum` is NOT: the NEON path accumulates it in 4 parallel
+//!   lanes before a horizontal add, a different rounding order than the
+//!   scalar loop. `sum` only feeds the diagnostic `mean_v`; exact-replay
+//!   tests must not assert on it across SIMD modes.
 
 // ---------- scalar reference (also the non-aarch64 path) ----------
 
@@ -60,11 +67,13 @@ pub mod neon {
         }
     }
 
-    /// NEON f32x4 integrate. Bit-identical to scalar `integrate`:
-    /// term = (rest - v)*a + gain*(ge-gi) evaluated as
+    /// NEON f32x4 integrate. `v` and spike indices are bit-identical to
+    /// scalar `integrate` (term = (rest - v)*a + gain*(ge-gi) evaluated as
     ///   t1 = sub(rest, v); t2 = mul(t1, a); t3 = sub(ge, gi);
     ///   t4 = mul(gain, t3); t5 = add(t2, t4); v = add(v, t5)
-    /// with no fma, so rounding order matches scalar mul/add exactly.
+    /// with no fma, so rounding order matches scalar mul/add exactly).
+    /// The returned sum accumulates in 4 lanes first — its rounding order
+    /// differs from the scalar loop, so only `v`/spikes are replay-stable.
     pub fn integrate(
         v: &mut [f32],
         g_exc: &[f32],
@@ -173,6 +182,10 @@ mod tests {
         let (sb, sumb) = ref_integrate(&mut b, &ge, &gi, 0.0, 0.975, 1.0, 15.0, 0.0);
         assert_eq!(a, b, "bit-identical integrate");
         assert_eq!(sa, sb);
-        assert_eq!(suma, sumb);
+        // NOTE: sum is not part of the bit-identity contract (lane accumulation
+        // order differs on NEON); it currently matches on these inputs. If this
+        // assertion ever fails on a new input, that is expected — loosen it
+        // instead of "fixing" the kernel.
+        assert_eq!(suma, sumb, "sum happens to match here; see NOTE");
     }
 }

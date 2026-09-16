@@ -12,7 +12,6 @@
 //! `n_threads > 1` the drain order changes float accumulation order, so
 //! outputs may drift by rounding (statistically equivalent).
 
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Barrier, Mutex};
 
 use crate::substrate::Substrate;
@@ -229,21 +228,22 @@ impl Engine {
     }
 
     /// Run `steps` ticks. `per_tick` is invoked after every tick with
-    /// (report, read-only engine view).
+    /// (report, read-only engine view). `steps == 0` is a no-op returning
+    /// the current state as a report.
     pub fn run_ticks(
         &mut self,
         steps: u32,
         per_tick: &mut dyn FnMut(&TickReport, &dyn EngineView),
     ) -> TickReport {
-        let steps = steps.max(1);
-        let mut last = TickReport { tick: self.tick, t_ms: self.t_ms, n_spikes: 0, mean_v: 0.0 };
+        let current = TickReport { tick: self.tick, t_ms: self.t_ms, n_spikes: self.spikes_last, mean_v: 0.0 };
+        let mut last = current;
         if self.cfg.n_threads <= 1 {
             for _ in 0..steps {
                 let r = self.tick_one_serial();
                 per_tick(&r, self);
                 last = r;
             }
-        } else {
+        } else if steps > 0 {
             last = self.run_ticks_parallel(steps, per_tick);
         }
         last
@@ -345,7 +345,6 @@ impl Engine {
             (self.cfg.v_rest, self.cfg.input_gain, self.cfg.v_thresh, self.cfg.v_reset, self.cfg.weight_scale, self.cfg.use_simd);
 
         let last_snap: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(std::mem::take(&mut self.last_spiked)));
-        let running = Arc::new(AtomicBool::new(true));
         let barriers: Vec<Arc<Barrier>> = (0..4).map(|_| Arc::new(Barrier::new(T))).collect();
         let spikes_pool: Arc<Mutex<Vec<Vec<u32>>>> = Arc::new(Mutex::new(Vec::new()));
         let vsum_pool: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
@@ -362,8 +361,8 @@ impl Engine {
 
             let mut handles = Vec::new();
             for tid in 1..T {
-                let (last_snap, running, barriers, spikes_pool, vsum_pool) =
-                    (last_snap.clone(), running.clone(), barriers.clone(), spikes_pool.clone(), vsum_pool.clone());
+                let (last_snap, barriers, spikes_pool, vsum_pool) =
+                    (last_snap.clone(), barriers.clone(), spikes_pool.clone(), vsum_pool.clone());
                 let mut scratch = Scratch::new(n);
                 handles.push(s.spawn(move || {
                     for _ in 0..steps {
