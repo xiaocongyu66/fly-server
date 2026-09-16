@@ -157,7 +157,9 @@ impl SessionManager {
                     out.push(i as u32);
                 }
             }
-        } else {
+            return out; // explicit ids are never truncated
+        }
+        {
             let region_idx = sel
                 .region
                 .as_ref()
