@@ -1,3 +1,8 @@
+[workspace]
+members = ["web"]
+exclude = ["third_party/dioxus-ui"]
+resolver = "2"
+
 [package]
 name = "fly-server"
 version = "0.1.0"
