@@ -564,7 +564,9 @@ impl Engine {
             return Err("truncated state".into());
         }
         self.last_spiked = b[off..off + ns * 4]
-            .as_chunks::<4>().0.iter()
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
         off += ns * 4;

@@ -89,11 +89,15 @@ fn cmd_bench(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let ticks: u32 = flag(args, "--ticks").and_then(|v| v.parse().ok()).unwrap_or(2000);
+    let ticks: u32 = flag(args, "--ticks")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2000);
     // sustained sensory load: inject current into N neurons every 10 ticks
     // so the scatter phase carries real traffic (0 spikes would only measure
     // barrier overhead)
-    let stim: u32 = flag(args, "--stim").and_then(|v| v.parse().ok()).unwrap_or(1000);
+    let stim: u32 = flag(args, "--stim")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1000);
     let cfg = parse_engine_cfg(args);
     let s = match substrate::load(&substrate_path) {
         Ok(s) => Arc::new(s),
@@ -104,17 +108,29 @@ fn cmd_bench(args: &[String]) -> i32 {
     };
     eprintln!(
         "bench: {} neurons, {} edges, threads={}, simd={}, stim={}, {} ticks",
-        s.n_neurons(), s.header.n_edges, cfg.n_threads, cfg.use_simd, stim, ticks
+        s.n_neurons(),
+        s.header.n_edges,
+        cfg.n_threads,
+        cfg.use_simd,
+        stim,
+        ticks
     );
     let n_neurons = s.n_neurons() as u32;
-    let stim_ids: Vec<u32> = (0..stim).map(|k| (k * (n_neurons / stim.max(1)).max(1)) as u32 % n_neurons).collect();
+    let stim_ids: Vec<u32> = (0..stim)
+        .map(|k| (k * (n_neurons / stim.max(1)).max(1)) as u32 % n_neurons)
+        .collect();
     let mut engine = fly_server::engine::Engine::new(s, cfg);
     // warm-up
     let _ = engine.run_ticks(50, &mut |_, _| {});
     let t0 = Instant::now();
     let mut total_spikes = 0u64;
     let mut done = 0u32;
-    let mut last = fly_server::engine::TickReport { tick: 0, t_ms: 0.0, n_spikes: 0, mean_v: 0.0 };
+    let mut last = fly_server::engine::TickReport {
+        tick: 0,
+        t_ms: 0.0,
+        n_spikes: 0,
+        mean_v: 0.0,
+    };
     while done < ticks {
         let batch = 10.min(ticks - done);
         engine.inject(&stim_ids, 30.0);
@@ -145,7 +161,9 @@ fn cmd_serve(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let port: u16 = flag(args, "--port").and_then(|p| p.parse().ok()).unwrap_or(8000);
+    let port: u16 = flag(args, "--port")
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8000);
     let host = flag(args, "--host").unwrap_or_else(|| "0.0.0.0".into());
     let admin_user = flag(args, "--admin-user").unwrap_or_else(|| "admin".into());
     let admin_pass = flag(args, "--admin-pass").unwrap_or_else(|| "flyserver".into());

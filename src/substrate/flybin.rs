@@ -105,8 +105,7 @@ impl Substrate {
 
 pub fn write_flybin(path: &std::path::Path, s: &Substrate) -> std::io::Result<()> {
     use std::io::Write;
-    let header_json = serde_json::to_vec(&s.header)
-        .map_err(std::io::Error::other)?;
+    let header_json = serde_json::to_vec(&s.header).map_err(std::io::Error::other)?;
     let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
     out.write_all(&MAGIC)?;
     out.write_all(&(header_json.len() as u32).to_le_bytes())?;
