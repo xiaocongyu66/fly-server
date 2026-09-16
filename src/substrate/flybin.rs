@@ -20,7 +20,8 @@ use serde::{Deserialize, Serialize};
 pub const MAGIC: [u8; 8] = *b"FLYBIN\x01\x00";
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct FlybinHeader {    pub format_version: u32,
+pub struct FlybinHeader {
+    pub format_version: u32,
     pub n_neurons: u32,
     pub n_edges: u64,
     pub source: String,
@@ -91,7 +92,9 @@ impl Substrate {
         let range = self.edges(pre);
         let (start, end) = (range.start, range.end);
         match &self.weights {
-            Weights::F32(w) => OutgoingIter::F32(self.indices[start..end].iter().zip(w[start..end].iter())),
+            Weights::F32(w) => {
+                OutgoingIter::F32(self.indices[start..end].iter().zip(w[start..end].iter()))
+            }
             Weights::U8 { w, scale } => {
                 let s = scale[pre];
                 OutgoingIter::U8(self.indices[start..end].iter().zip(w[start..end].iter()), s)
@@ -148,7 +151,10 @@ pub fn read_flybin(path: &std::path::Path) -> std::io::Result<Substrate> {
     let mut magic = [0u8; 8];
     buf.read_exact(&mut magic)?;
     if magic != MAGIC {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "bad magic: not a .flybin file"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "bad magic: not a .flybin file",
+        ));
     }
     let mut len_b = [0u8; 4];
     buf.read_exact(&mut len_b)?;
@@ -187,7 +193,16 @@ pub fn read_flybin(path: &std::path::Path) -> std::io::Result<Substrate> {
     let cell_type = cast_u32(&read_vec(n * 4)?)?;
     let nt_type = cast_u32(&read_vec(n * 4)?)?;
 
-    Ok(Substrate { header, indptr, indices, weights, root_ids, region, cell_type, nt_type })
+    Ok(Substrate {
+        header,
+        indptr,
+        indices,
+        weights,
+        root_ids,
+        region,
+        cell_type,
+        nt_type,
+    })
 }
 
 fn cast_u64(v: &[u8]) -> std::io::Result<Vec<u64>> {
@@ -203,7 +218,10 @@ fn cast_f32(v: &[u8]) -> std::io::Result<Vec<f32>> {
 fn bytemuck_try<T: FromLeBytesSafe + Copy>(v: &[u8]) -> std::io::Result<Vec<T>> {
     let chunks = v.chunks_exact(std::mem::size_of::<T>());
     if !chunks.remainder().is_empty() {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "aligned read failed: truncated data"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "aligned read failed: truncated data",
+        ));
     }
     Ok(chunks.map(|c| T::from_le_bytes_safe(c)).collect())
 }

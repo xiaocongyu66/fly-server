@@ -16,10 +16,19 @@ fn unix_nanos() -> u128 {
 
 impl ItemLog {
     pub fn new() -> Self {
-        Self { items: Vec::new(), seq: 0 }
+        Self {
+            items: Vec::new(),
+            seq: 0,
+        }
     }
 
-    pub fn append(&mut self, session_id: &str, kind: &str, tick: u64, body: serde_json::Value) -> SessionItem {
+    pub fn append(
+        &mut self,
+        session_id: &str,
+        kind: &str,
+        tick: u64,
+        body: serde_json::Value,
+    ) -> SessionItem {
         self.seq += 1;
         let item = SessionItem {
             id: format!("item_{}_{}", unix_nanos(), self.seq),
@@ -37,7 +46,10 @@ impl ItemLog {
     pub fn list(&self, q: &ListItemsQuery) -> ListItemsResponse {
         let limit = q.limit.unwrap_or(20).clamp(1, 100) as usize;
         let desc = q.order.as_deref().unwrap_or("desc") != "asc";
-        let cursor = q.after.as_ref().and_then(|a| self.items.iter().position(|i| i.id == *a));
+        let cursor = q
+            .after
+            .as_ref()
+            .and_then(|a| self.items.iter().position(|i| i.id == *a));
         let invalid_cursor = q.after.is_some() && cursor.is_none();
 
         // desc: newest first. cursor p means "items before p, reversed".
@@ -104,13 +116,20 @@ mod tests {
     #[test]
     fn after_cursor_paginates() {
         let log = log10();
-        let q1 = ListItemsQuery { limit: Some(3), ..Default::default() };
+        let q1 = ListItemsQuery {
+            limit: Some(3),
+            ..Default::default()
+        };
         let first = log.list(&q1);
         assert_eq!(first.data.len(), 3);
         assert_eq!(first.data[0].tick, 9, "desc newest first");
         assert!(first.has_more);
 
-        let q2 = ListItemsQuery { limit: Some(3), after: first.last_id.clone(), order: Some("desc".into()) };
+        let q2 = ListItemsQuery {
+            limit: Some(3),
+            after: first.last_id.clone(),
+            order: Some("desc".into()),
+        };
         let second = log.list(&q2);
         assert_eq!(second.data.len(), 3);
         assert_eq!(second.data[0].tick, 6, "next page continues");
@@ -118,21 +137,34 @@ mod tests {
 
         // exhausted page: cursor at oldest item -> empty
         let all = log.list(&ListItemsQuery::default());
-        let q3 = ListItemsQuery { limit: Some(3), after: all.last_id.clone(), order: Some("desc".into()) };
+        let q3 = ListItemsQuery {
+            limit: Some(3),
+            after: all.last_id.clone(),
+            order: Some("desc".into()),
+        };
         assert_eq!(log.list(&q3).data.len(), 0);
     }
 
     #[test]
     fn asc_order() {
-        let r = log10().list(&ListItemsQuery { order: Some("asc".into()), ..Default::default() });
+        let r = log10().list(&ListItemsQuery {
+            order: Some("asc".into()),
+            ..Default::default()
+        });
         assert!(r.data[0].tick <= r.data[1].tick, "asc order");
     }
 
     #[test]
     fn limit_clamped() {
-        let r = log10().list(&ListItemsQuery { limit: Some(500), ..Default::default() });
+        let r = log10().list(&ListItemsQuery {
+            limit: Some(500),
+            ..Default::default()
+        });
         assert_eq!(r.data.len(), 10);
-        let r2 = log10().list(&ListItemsQuery { limit: Some(3), ..Default::default() });
+        let r2 = log10().list(&ListItemsQuery {
+            limit: Some(3),
+            ..Default::default()
+        });
         assert_eq!(r2.data.len(), 3);
     }
 }

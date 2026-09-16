@@ -48,7 +48,11 @@ impl Readout for DefaultVncReadout {
                 rate: (v[i as usize] / v_thresh).clamp(0.0, 1.0),
             })
             .collect();
-        actions.sort_by(|a, b| b.rate.partial_cmp(&a.rate).unwrap_or(std::cmp::Ordering::Equal));
+        actions.sort_by(|a, b| {
+            b.rate
+                .partial_cmp(&a.rate)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         actions.truncate(self.max_actions);
         actions
     }
@@ -67,7 +71,10 @@ fn one() -> f32 {
 }
 impl Default for GainModulation {
     fn default() -> Self {
-        Self { exc_scale: 1.0, inh_scale: 1.0 }
+        Self {
+            exc_scale: 1.0,
+            inh_scale: 1.0,
+        }
     }
 }
 
@@ -79,12 +86,17 @@ pub struct AdapterRegistry {
 impl AdapterRegistry {
     pub fn builtin() -> Self {
         Self {
-            factories: vec![("builtin-vnc-readout", || Box::new(DefaultVncReadout::new()) as Box<dyn Readout>)],
+            factories: vec![("builtin-vnc-readout", || {
+                Box::new(DefaultVncReadout::new()) as Box<dyn Readout>
+            })],
         }
     }
 
     pub fn create(&self, id: &str) -> Option<Box<dyn Readout>> {
-        self.factories.iter().find(|(k, _)| *k == id).map(|(_, f)| f())
+        self.factories
+            .iter()
+            .find(|(k, _)| *k == id)
+            .map(|(_, f)| f())
     }
 
     pub fn list(&self) -> Vec<String> {

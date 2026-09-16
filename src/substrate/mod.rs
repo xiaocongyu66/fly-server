@@ -33,7 +33,11 @@ pub enum Quant {
 }
 
 /// Compile FlyWire v783 Princeton CSV.gz dumps into a `.flybin` substrate.
-pub fn compile_flywire(data_dir: &Path, out_path: &Path, quant: Quant) -> std::io::Result<CompileReport> {
+pub fn compile_flywire(
+    data_dir: &Path,
+    out_path: &Path,
+    quant: Quant,
+) -> std::io::Result<CompileReport> {
     let conn_path = data_dir.join("connections.csv.gz");
     let neurons_path = data_dir.join("neurons.csv.gz");
     for p in [&conn_path, &neurons_path] {
@@ -55,7 +59,10 @@ pub fn compile_flywire(data_dir: &Path, out_path: &Path, quant: Quant) -> std::i
     })?;
     let n = metas.len();
     if n == 0 {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "no neurons parsed"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "no neurons parsed",
+        ));
     }
 
     // 2. Connections: map roots to indices, keep (pre, post, syn).
@@ -119,7 +126,13 @@ pub fn compile_flywire(data_dir: &Path, out_path: &Path, quant: Quant) -> std::i
                 }
             }
             let scale: Vec<f32> = (0..n)
-                .map(|i| if row_max[i] <= 255 { 1.0 } else { row_max[i] as f32 / 255.0 })
+                .map(|i| {
+                    if row_max[i] <= 255 {
+                        1.0
+                    } else {
+                        row_max[i] as f32 / 255.0
+                    }
+                })
                 .collect();
             let mut w = vec![0u8; agg.len()];
             let mut c2 = indptr.clone();
@@ -133,7 +146,10 @@ pub fn compile_flywire(data_dir: &Path, out_path: &Path, quant: Quant) -> std::i
     };
 
     // 5. String tables.
-    fn string_table(metas: &[flywire::NeuronMeta], pick: fn(&flywire::NeuronMeta) -> &str) -> (Vec<String>, Vec<u32>) {
+    fn string_table(
+        metas: &[flywire::NeuronMeta],
+        pick: fn(&flywire::NeuronMeta) -> &str,
+    ) -> (Vec<String>, Vec<u32>) {
         let mut map: HashMap<String, u32> = HashMap::new();
         let mut table: Vec<String> = Vec::new();
         let mut ids = Vec::with_capacity(metas.len());
@@ -163,7 +179,11 @@ pub fn compile_flywire(data_dir: &Path, out_path: &Path, quant: Quant) -> std::i
             n_neurons: n as u32,
             n_edges,
             source: format!("FlyWire v783 Princeton dump ({})", data_dir.display()),
-            string_tables: StringTables { regions, cell_types, nt_types },
+            string_tables: StringTables {
+                regions,
+                cell_types,
+                nt_types,
+            },
         },
         indptr,
         indices,

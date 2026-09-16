@@ -104,7 +104,11 @@ pub fn train(mgr: &SessionManager, cfg: &TrainConfig) -> Result<TrainResult, Api
         rewards.push(run_episode(mgr, cfg, ep)?);
     }
     let n = rewards.len() as f32;
-    let mean = if n > 0.0 { rewards.iter().sum::<f32>() / n } else { 0.0 };
+    let mean = if n > 0.0 {
+        rewards.iter().sum::<f32>() / n
+    } else {
+        0.0
+    };
     let best = rewards.iter().copied().fold(0.0f32, f32::max);
     Ok(TrainResult {
         episodes,
@@ -132,7 +136,10 @@ mod tests {
     use super::*;
 
     fn act(id: u64, rate: f32) -> Action {
-        Action { neuron_id: id, rate }
+        Action {
+            neuron_id: id,
+            rate,
+        }
     }
 
     #[test]

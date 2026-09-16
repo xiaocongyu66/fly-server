@@ -9,7 +9,7 @@
 pub mod http;
 
 use std::collections::HashMap;
-use std::sync::{Arc, mpsc};
+use std::sync::{mpsc, Arc};
 
 use crate::admin::AdminStore;
 use crate::error::ApiError;
@@ -49,7 +49,10 @@ pub fn run_server(
 fn bearer<'a>(req: &'a HttpRequest) -> Option<&'a str> {
     // header first, then query token (SSE EventSource cannot set headers)
     if let Some((_, v)) = req.headers.iter().find(|(k, _)| k == "authorization") {
-        if let Some(t) = v.strip_prefix("Bearer ").or(Some(v.as_str()).filter(|s| !s.is_empty())) {
+        if let Some(t) = v
+            .strip_prefix("Bearer ")
+            .or(Some(v.as_str()).filter(|s| !s.is_empty()))
+        {
             return Some(t.trim());
         }
     }
@@ -57,19 +60,33 @@ fn bearer<'a>(req: &'a HttpRequest) -> Option<&'a str> {
 }
 
 fn route(mgr: &SessionManager, admin: &AdminStore, req: &HttpRequest) -> HttpResponse {
-    let segs: Vec<&str> = req.path.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
+    let segs: Vec<&str> = req
+        .path
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
 
     // public endpoints
     match (req.method.as_str(), segs.as_slice()) {
         ("GET", ["health"]) => {
-            return HttpResponse::json(200, format!(r#"{{"ok":true,"version":"{}"}}"#, crate::VERSION));
+            return HttpResponse::json(
+                200,
+                format!(r#"{{"ok":true,"version":"{}"}}"#, crate::VERSION),
+            );
         }
         ("POST", ["v1", "admin", "login"]) => {
             return with_body(req, |b: LoginRequest| {
                 admin
                     .login(&b.username, &b.password)
                     .map(|token| serde_json::json!({"token": token, "role": "admin"}))
-                    .ok_or_else(|| ApiError::invalid_request("invalid_credentials", "wrong username or password", None))
+                    .ok_or_else(|| {
+                        ApiError::invalid_request(
+                            "invalid_credentials",
+                            "wrong username or password",
+                            None,
+                        )
+                    })
             });
         }
         _ => {}
@@ -104,7 +121,11 @@ fn route_authed(
     // admin-only management endpoints
     if segs.first() == Some(&"v1") && segs.get(1) == Some(&"admin") {
         if !is_admin {
-            return json_err(&ApiError::invalid_request("admin_required", "admin token required", None));
+            return json_err(&ApiError::invalid_request(
+                "admin_required",
+                "admin token required",
+                None,
+            ));
         }
         let (m2, a2, a3, a4) = (
             req.method.as_str(),
@@ -116,7 +137,11 @@ fn route_authed(
             ("GET", Some("keys"), None, _) => json_ok(admin.list_keys()),
             ("POST", Some("keys"), None, _) => match parse_body::<serde_json::Value>(req) {
                 Ok(b) => {
-                    let name = b.get("name").and_then(|v| v.as_str()).unwrap_or("default").to_string();
+                    let name = b
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("default")
+                        .to_string();
                     json_ok(admin.create_key(&name))
                 }
                 Err(resp) => resp,
@@ -153,12 +178,16 @@ fn route_authed(
             Ok(v) => json_ok(v),
             Err(e) => json_err(&e),
         },
-        ("PATCH", ["v1", "sessions", id]) => with_body(req, |b: UpdateSessionRequest| mgr.update(id, b)),
+        ("PATCH", ["v1", "sessions", id]) => {
+            with_body(req, |b: UpdateSessionRequest| mgr.update(id, b))
+        }
         ("DELETE", ["v1", "sessions", id]) => match mgr.delete(id) {
             Ok(()) => json_ok(serde_json::json!({"deleted": true, "id": id})),
             Err(e) => json_err(&e),
         },
-        ("POST", ["v1", "sessions", id, "observe"]) => with_body(req, |b: ObserveRequest| mgr.observe(id, b)),
+        ("POST", ["v1", "sessions", id, "observe"]) => {
+            with_body(req, |b: ObserveRequest| mgr.observe(id, b))
+        }
         ("POST", ["v1", "sessions", id, "step"]) => {
             let parsed: Result<StepRequest, HttpResponse> = if req.body.is_empty() {
                 Ok(StepRequest { steps: 1 })
@@ -211,8 +240,13 @@ fn json_err(e: &ApiError) -> HttpResponse {
 }
 
 fn parse_body<T: serde::de::DeserializeOwned>(req: &HttpRequest) -> Result<T, HttpResponse> {
-    serde_json::from_slice(&req.body)
-        .map_err(|e| json_err(&ApiError::invalid_request("invalid_json", e.to_string(), None)))
+    serde_json::from_slice(&req.body).map_err(|e| {
+        json_err(&ApiError::invalid_request(
+            "invalid_json",
+            e.to_string(),
+            None,
+        ))
+    })
 }
 
 fn with_body<T, R>(req: &HttpRequest, f: impl FnOnce(T) -> Result<R, ApiError>) -> HttpResponse
@@ -286,13 +320,22 @@ mod tests {
 
     #[test]
     fn health_and_models() {
-        let mgr = SessionManager::new(mini(), "test-substrate".into(), crate::engine::EngineConfig::default());
-        let admin = crate::admin::AdminStore::new("admin", "pw", std::path::PathBuf::from("/tmp/test_keys1.json"));
+        let mgr = SessionManager::new(
+            mini(),
+            "test-substrate".into(),
+            crate::engine::EngineConfig::default(),
+        );
+        let admin = crate::admin::AdminStore::new(
+            "admin",
+            "pw",
+            std::path::PathBuf::from("/tmp/test_keys1.json"),
+        );
         let r = route(&mgr, &admin, &req("GET", "/health", ""));
         assert_eq!(r.status, 200);
         let key = admin.create_key("t");
         let mut req = req("GET", "/v1/models", "");
-        req.headers.push(("authorization".into(), format!("Bearer {}", key.secret)));
+        req.headers
+            .push(("authorization".into(), format!("Bearer {}", key.secret)));
         let r = route(&mgr, &admin, &req);
         let Body::Bytes(b) = r.body else { panic!() };
         let s = String::from_utf8(b).unwrap();
@@ -301,12 +344,21 @@ mod tests {
 
     #[test]
     fn create_and_step() {
-        let mgr = SessionManager::new(mini(), "test-substrate".into(), crate::engine::EngineConfig::default());
-        let admin = crate::admin::AdminStore::new("admin", "pw", std::path::PathBuf::from("/tmp/test_keys2.json"));
+        let mgr = SessionManager::new(
+            mini(),
+            "test-substrate".into(),
+            crate::engine::EngineConfig::default(),
+        );
+        let admin = crate::admin::AdminStore::new(
+            "admin",
+            "pw",
+            std::path::PathBuf::from("/tmp/test_keys2.json"),
+        );
         let key = admin.create_key("t");
         let mut authed = |method: &str, path: &str, body: &str| {
             let mut rq = req(method, path, body);
-            rq.headers.push(("authorization".into(), format!("Bearer {}", key.secret)));
+            rq.headers
+                .push(("authorization".into(), format!("Bearer {}", key.secret)));
             route(&mgr, &admin, &rq)
         };
         let r = authed("POST", "/v1/sessions", r#"{"substrate":"test-substrate"}"#);

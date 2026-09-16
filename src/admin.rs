@@ -15,9 +15,9 @@ const TOKEN_TTL: Duration = Duration::from_secs(24 * 3600);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKey {
-    pub id: String,          // "key_<short>"
+    pub id: String, // "key_<short>"
     #[serde(skip_serializing)]
-    pub secret: String,      // "fly_sk_<hex>" — only shown once at creation
+    pub secret: String, // "fly_sk_<hex>" — only shown once at creation
     pub name: String,
     pub created_at: u64,
     pub enabled: bool,
@@ -50,7 +50,7 @@ pub struct AdminStore {
     admin_pass_hash: [u8; 32],
     salt: String,
     tokens: Mutex<HashMap<String, Instant>>,
-    keys: Mutex<HashMap<String, ApiKey>>,   // by id
+    keys: Mutex<HashMap<String, ApiKey>>, // by id
     usage: Mutex<HashMap<String, KeyUsage>>,
     store_path: std::path::PathBuf,
 }
@@ -134,7 +134,10 @@ impl AdminStore {
             return None;
         }
         let token = format!("fly_at_{}", rand_hex(24));
-        self.tokens.lock().unwrap().insert(token.clone(), Instant::now() + TOKEN_TTL);
+        self.tokens
+            .lock()
+            .unwrap()
+            .insert(token.clone(), Instant::now() + TOKEN_TTL);
         Some(token)
     }
 
@@ -153,8 +156,15 @@ impl AdminStore {
             created_at: now_secs(),
             enabled: true,
         };
-        self.keys.lock().unwrap().insert(key.id.clone(), key.clone());
-        self.usage.lock().unwrap().entry(key.id.clone()).or_default();
+        self.keys
+            .lock()
+            .unwrap()
+            .insert(key.id.clone(), key.clone());
+        self.usage
+            .lock()
+            .unwrap()
+            .entry(key.id.clone())
+            .or_default();
         self.save_disk();
         key
     }
@@ -179,7 +189,13 @@ impl AdminStore {
     }
 
     pub fn set_key_enabled(&self, id: &str, enabled: bool) -> bool {
-        let hit = self.keys.lock().unwrap().get_mut(id).map(|k| k.enabled = enabled).is_some();
+        let hit = self
+            .keys
+            .lock()
+            .unwrap()
+            .get_mut(id)
+            .map(|k| k.enabled = enabled)
+            .is_some();
         if hit {
             self.save_disk();
         }
@@ -205,7 +221,13 @@ impl AdminStore {
         self.verify_key(bearer).map(|id| ("key".into(), Some(id)))
     }
 
-    pub fn record_usage(&self, key_id: Option<&str>, requests: u64, ticks: u64, sessions_created: u64) {
+    pub fn record_usage(
+        &self,
+        key_id: Option<&str>,
+        requests: u64,
+        ticks: u64,
+        sessions_created: u64,
+    ) {
         if let Some(id) = key_id {
             let mut usage = self.usage.lock().unwrap();
             let u = usage.entry(id.to_string()).or_default();

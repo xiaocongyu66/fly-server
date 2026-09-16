@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionObject {
-    pub id: String, // "sess_..."
-    pub object: String, // "session"
+    pub id: String,      // "sess_..."
+    pub object: String,  // "session"
     pub created_at: u64, // unix seconds
     pub substrate: String,
     pub adapters: Vec<String>,
@@ -100,13 +100,15 @@ pub struct StepRequest {
     #[serde(default = "default_steps")]
     pub steps: u32,
 }
-fn default_steps() -> u32 { 1 }
+fn default_steps() -> u32 {
+    1
+}
 
 // ---------- items (experiment log, paginated) ----------
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionItem {
-    pub id: String, // "item_..."
+    pub id: String,     // "item_..."
     pub object: String, // "session.item"
     pub session_id: String,
     pub created_at: u64,
@@ -155,9 +157,9 @@ pub struct SubstrateObject {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AdapterObject {
-    pub id: String, // "adp_..."
+    pub id: String,     // "adp_..."
     pub object: String, // "adapter"
-    pub kind: String, // "readout" | "gains" | "sensory"
+    pub kind: String,   // "readout" | "gains" | "sensory"
     pub substrate: String,
     pub trained_ticks: u64,
 }

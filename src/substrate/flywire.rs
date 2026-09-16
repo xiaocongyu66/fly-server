@@ -47,24 +47,33 @@ fn split_csv_line(line: &str) -> Vec<String> {
 }
 
 fn header_index(header: &str, wanted: &[&str]) -> std::io::Result<Vec<usize>> {
-    let cols: Vec<String> = split_csv_line(header).into_iter().map(|s| s.trim().to_lowercase()).collect();
+    let cols: Vec<String> = split_csv_line(header)
+        .into_iter()
+        .map(|s| s.trim().to_lowercase())
+        .collect();
     let mut idx = Vec::with_capacity(wanted.len());
     for w in wanted {
         let wl = w.to_lowercase();
-        idx.push(
-            cols.iter()
-                .position(|c| c == &wl)
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("column `{w}` not found in header: {header}")))?,
-        );
+        idx.push(cols.iter().position(|c| c == &wl).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("column `{w}` not found in header: {header}"),
+            )
+        })?);
     }
     Ok(idx)
 }
 
 /// Stream connections CSV.gz, yielding raw (pre, post, syn) rows.
-pub fn stream_connections(path: &std::path::Path, mut f: impl FnMut(RawConn) -> std::io::Result<()>) -> std::io::Result<u64> {
+pub fn stream_connections(
+    path: &std::path::Path,
+    mut f: impl FnMut(RawConn) -> std::io::Result<()>,
+) -> std::io::Result<u64> {
     let r = open_gz(path)?;
     let mut lines = r.lines();
-    let header = lines.next().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "empty connections file"))??;
+    let header = lines.next().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "empty connections file")
+    })??;
     let idx = header_index(&header, &["pre_root_id", "post_root_id", "syn_count"])?;
     let (i_pre, i_post, i_syn) = (idx[0], idx[1], idx[2]);
     let mut count = 0u64;
@@ -87,11 +96,24 @@ pub fn stream_connections(path: &std::path::Path, mut f: impl FnMut(RawConn) -> 
 }
 
 /// Stream neurons CSV.gz, yielding per-neuron metadata.
-pub fn stream_neurons(path: &std::path::Path, mut f: impl FnMut(NeuronMeta) -> std::io::Result<()>) -> std::io::Result<u64> {
+pub fn stream_neurons(
+    path: &std::path::Path,
+    mut f: impl FnMut(NeuronMeta) -> std::io::Result<()>,
+) -> std::io::Result<u64> {
     let r = open_gz(path)?;
     let mut lines = r.lines();
-    let header = lines.next().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "empty neurons file"))??;
-    let idx = header_index(&header, &["Root ID", "Top in/out region", "Primary Cell Type", "Predicted NT type"])?;
+    let header = lines.next().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "empty neurons file")
+    })??;
+    let idx = header_index(
+        &header,
+        &[
+            "Root ID",
+            "Top in/out region",
+            "Primary Cell Type",
+            "Predicted NT type",
+        ],
+    )?;
     let (i_id, i_region, i_ct, i_nt) = (idx[0], idx[1], idx[2], idx[3]);
     let mut count = 0u64;
     for line in lines {
@@ -106,7 +128,11 @@ pub fn stream_neurons(path: &std::path::Path, mut f: impl FnMut(NeuronMeta) -> s
         };
         let meta = NeuronMeta {
             root_id,
-            region: cols.get(i_region).map(|s| s.trim()).unwrap_or("").to_string(),
+            region: cols
+                .get(i_region)
+                .map(|s| s.trim())
+                .unwrap_or("")
+                .to_string(),
             cell_type: cols.get(i_ct).map(|s| s.trim()).unwrap_or("").to_string(),
             nt_type: cols.get(i_nt).map(|s| s.trim()).unwrap_or("").to_string(),
         };
@@ -117,7 +143,10 @@ pub fn stream_neurons(path: &std::path::Path, mut f: impl FnMut(NeuronMeta) -> s
 }
 
 fn bad_row(line: &str, e: impl std::fmt::Display) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("bad row `{line}`: {e}"))
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!("bad row `{line}`: {e}"),
+    )
 }
 
 /// Small helper so callers can sanity-check a gz file without full parse.

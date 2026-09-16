@@ -11,14 +11,33 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    pub fn invalid_request(code: &'static str, message: impl Into<String>, param: Option<&str>) -> Self {
-        Self { err_type: "invalid_request_error", code, message: message.into(), param: param.map(Into::into) }
+    pub fn invalid_request(
+        code: &'static str,
+        message: impl Into<String>,
+        param: Option<&str>,
+    ) -> Self {
+        Self {
+            err_type: "invalid_request_error",
+            code,
+            message: message.into(),
+            param: param.map(Into::into),
+        }
     }
     pub fn not_found(message: impl Into<String>) -> Self {
-        Self { err_type: "invalid_request_error", code: "not_found", message: message.into(), param: None }
+        Self {
+            err_type: "invalid_request_error",
+            code: "not_found",
+            message: message.into(),
+            param: None,
+        }
     }
     pub fn internal(message: impl Into<String>) -> Self {
-        Self { err_type: "server_error", code: "internal_error", message: message.into(), param: None }
+        Self {
+            err_type: "server_error",
+            code: "internal_error",
+            message: message.into(),
+            param: None,
+        }
     }
     pub fn http_status(&self) -> u16 {
         match self.err_type {

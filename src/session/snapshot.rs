@@ -10,7 +10,10 @@ pub struct SnapshotStore {
 
 impl SnapshotStore {
     pub fn new(cap_per_session: usize) -> Self {
-        Self { per_session: HashMap::new(), cap_per_session: cap_per_session.max(1) }
+        Self {
+            per_session: HashMap::new(),
+            cap_per_session: cap_per_session.max(1),
+        }
     }
 
     pub fn put(&mut self, session_id: &str, tick: u64, blob: Vec<u8>) {
@@ -30,7 +33,10 @@ impl SnapshotStore {
     }
 
     pub fn len(&self, session_id: &str) -> usize {
-        self.per_session.get(session_id).map(|m| m.len()).unwrap_or(0)
+        self.per_session
+            .get(session_id)
+            .map(|m| m.len())
+            .unwrap_or(0)
     }
 
     pub fn total_len(&self) -> usize {

@@ -23,7 +23,7 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
+      - run: cargo fmt --check -p fly-server
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --release
 

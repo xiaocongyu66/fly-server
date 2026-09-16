@@ -97,11 +97,18 @@ impl SessionManager {
         if !req.substrate.is_empty() && req.substrate != self.substrate_id {
             return Err(ApiError::invalid_request(
                 "substrate_not_found",
-                format!("unknown substrate `{}` (available: `{}`)", req.substrate, self.substrate_id),
+                format!(
+                    "unknown substrate `{}` (available: `{}`)",
+                    req.substrate, self.substrate_id
+                ),
                 Some("substrate"),
             ));
         }
-        let id = format!("sess_{}_{:x}", unix_nanos(), SESSION_COUNTER.fetch_add(1, Ordering::Relaxed));
+        let id = format!(
+            "sess_{}_{:x}",
+            unix_nanos(),
+            SESSION_COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
         let dt_ms = req.dt_ms.unwrap_or(self.engine_cfg.dt_ms);
         let mut cfg = self.engine_cfg.clone();
         cfg.dt_ms = dt_ms;
@@ -137,13 +144,17 @@ impl SessionManager {
 
     pub fn get(&self, id: &str) -> ApiResult<SessionObject> {
         let sessions = self.sessions.lock().unwrap();
-        let s = sessions.get(id).ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
+        let s = sessions
+            .get(id)
+            .ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
         Ok(Self::to_object(s, &[]))
     }
 
     pub fn update(&self, id: &str, req: UpdateSessionRequest) -> ApiResult<SessionObject> {
         let mut sessions = self.sessions.lock().unwrap();
-        let s = sessions.get_mut(id).ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
+        let s = sessions
+            .get_mut(id)
+            .ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
         if let Some(meta) = req.metadata {
             s.metadata = meta;
         }
@@ -172,18 +183,27 @@ impl SessionManager {
             return out; // explicit ids are never truncated
         }
         {
-            let region_idx = sel
-                .region
-                .as_ref()
-                .and_then(|r| sub.header.string_tables.regions.iter().position(|t| t.eq_ignore_ascii_case(r)));
-            let ct_idx = sel
-                .cell_type
-                .as_ref()
-                .and_then(|c| sub.header.string_tables.cell_types.iter().position(|t| t.eq_ignore_ascii_case(c)));
-            let nt_idx = sel
-                .nt_type
-                .as_ref()
-                .and_then(|t| sub.header.string_tables.nt_types.iter().position(|x| x.eq_ignore_ascii_case(t)));
+            let region_idx = sel.region.as_ref().and_then(|r| {
+                sub.header
+                    .string_tables
+                    .regions
+                    .iter()
+                    .position(|t| t.eq_ignore_ascii_case(r))
+            });
+            let ct_idx = sel.cell_type.as_ref().and_then(|c| {
+                sub.header
+                    .string_tables
+                    .cell_types
+                    .iter()
+                    .position(|t| t.eq_ignore_ascii_case(c))
+            });
+            let nt_idx = sel.nt_type.as_ref().and_then(|t| {
+                sub.header
+                    .string_tables
+                    .nt_types
+                    .iter()
+                    .position(|x| x.eq_ignore_ascii_case(t))
+            });
             if region_idx.is_some() || ct_idx.is_some() || nt_idx.is_some() {
                 for i in 0..n {
                     if region_idx.is_some() && sub.region[i] as usize != region_idx.unwrap() {
@@ -209,7 +229,9 @@ impl SessionManager {
 
     pub fn observe(&self, id: &str, req: ObserveRequest) -> ApiResult<SessionItem> {
         let mut sessions = self.sessions.lock().unwrap();
-        let s = sessions.get_mut(id).ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
+        let s = sessions
+            .get_mut(id)
+            .ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
         let idx = self.resolve_selector(&req.target);
         if idx.is_empty() {
             return Err(ApiError::invalid_request(
@@ -236,10 +258,18 @@ impl SessionManager {
         let snapshot_every = self.snapshot_every;
         let substrate = self.substrate.clone();
         let mut sessions = self.sessions.lock().unwrap();
-        let s = sessions.get_mut(id).ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
+        let s = sessions
+            .get_mut(id)
+            .ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
 
         // split borrows: engine goes into run_ticks, the rest stay callable
-        let SessionState { engine, log, usage, subscribers, .. } = s;
+        let SessionState {
+            engine,
+            log,
+            usage,
+            subscribers,
+            ..
+        } = s;
 
         let mut actions: Vec<Action> = Vec::new();
         let mut last_report: Option<TickReport> = None;
@@ -247,13 +277,22 @@ impl SessionManager {
             // Motor readout: spiking VNC neurons, rate from membrane potential.
             actions.clear();
             for &i in view.spikes() {
-                let region = substrate.header.string_tables.regions[substrate.region[i as usize] as usize].clone();
+                let region = substrate.header.string_tables.regions
+                    [substrate.region[i as usize] as usize]
+                    .clone();
                 if region.to_lowercase().contains("vnc") {
                     let rate = (view.membrane(i as usize) / v_thresh).clamp(0.0, 1.0);
-                    actions.push(Action { neuron_id: substrate.root_ids[i as usize], rate });
+                    actions.push(Action {
+                        neuron_id: substrate.root_ids[i as usize],
+                        rate,
+                    });
                 }
             }
-            actions.sort_by(|a, b| b.rate.partial_cmp(&a.rate).unwrap_or(std::cmp::Ordering::Equal));
+            actions.sort_by(|a, b| {
+                b.rate
+                    .partial_cmp(&a.rate)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             actions.truncate(32);
 
             if snapshot_every > 0 && report.tick % snapshot_every == 0 {
@@ -291,7 +330,9 @@ impl SessionManager {
 
     pub fn list_items(&self, id: &str, q: ListItemsQuery) -> ApiResult<ListItemsResponse> {
         let sessions = self.sessions.lock().unwrap();
-        let s = sessions.get(id).ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
+        let s = sessions
+            .get(id)
+            .ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
         Ok(s.log.list(&q))
     }
 
@@ -324,7 +365,8 @@ impl SessionManager {
             let s = sessions.get_mut(&obj.id).unwrap();
             s.engine.restore_state(&blob).map_err(ApiError::internal)?;
             s.usage.ticks_reused = req.at_tick;
-            let body = serde_json::json!({"source_session": req.source_session, "at_tick": req.at_tick});
+            let body =
+                serde_json::json!({"source_session": req.source_session, "at_tick": req.at_tick});
             s.log.append(&s.id, "fork", req.at_tick, body);
         }
         obj.current_tick = req.at_tick;
@@ -334,14 +376,18 @@ impl SessionManager {
     pub fn subscribe(&self, id: &str) -> ApiResult<std::sync::mpsc::Receiver<ActivityEvent>> {
         let (tx, rx) = std::sync::mpsc::channel();
         let mut sessions = self.sessions.lock().unwrap();
-        let s = sessions.get_mut(id).ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
+        let s = sessions
+            .get_mut(id)
+            .ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
         s.subscribers.push(tx);
         Ok(rx)
     }
 
     pub fn usage_of(&self, id: &str) -> ApiResult<Usage> {
         let sessions = self.sessions.lock().unwrap();
-        let s = sessions.get(id).ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
+        let s = sessions
+            .get(id)
+            .ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
         Ok(s.usage.clone())
     }
 }
@@ -378,7 +424,11 @@ mod tests {
     }
 
     fn mgr() -> SessionManager {
-        let mut m = SessionManager::new(mini_substrate(), "test-substrate".into(), crate::engine::EngineConfig::default());
+        let mut m = SessionManager::new(
+            mini_substrate(),
+            "test-substrate".into(),
+            crate::engine::EngineConfig::default(),
+        );
         m.snapshot_every = 1;
         m
     }
@@ -402,7 +452,10 @@ mod tests {
                 &sid,
                 ObserveRequest {
                     modality: "current".into(),
-                    target: NeuronSelector { ids: vec![100], ..Default::default() },
+                    target: NeuronSelector {
+                        ids: vec![100],
+                        ..Default::default()
+                    },
                     current: 30.0,
                     duration_ticks: 1,
                 },
@@ -439,7 +492,11 @@ mod tests {
     fn fork_missing_snapshot_is_error() {
         let m = mgr();
         let err = m
-            .fork(ForkRequest { source_session: "nope".into(), at_tick: 5, metadata: HashMap::new() })
+            .fork(ForkRequest {
+                source_session: "nope".into(),
+                at_tick: 5,
+                metadata: HashMap::new(),
+            })
             .unwrap_err();
         assert_eq!(err.code, "snapshot_not_found");
     }

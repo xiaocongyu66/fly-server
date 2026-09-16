@@ -86,7 +86,16 @@ pub enum Polarity {
 /// Map a FlyWire predicted NT string to polarity.
 pub fn nt_polarity(nt: &str) -> Polarity {
     match nt.to_uppercase().as_str() {
-        "GLUT" | "ACETYLCHOLINE" | "ACH" | "DOPAMINE" | "SEROTONINE" | "SEROTONIN" | "OCTOPAMINE" | "HISTAMINE" | "TYRAMINE" | "TYRAMINE-OCTOPAMINE" => Polarity::Excitatory,
+        "GLUT"
+        | "ACETYLCHOLINE"
+        | "ACH"
+        | "DOPAMINE"
+        | "SEROTONINE"
+        | "SEROTONIN"
+        | "OCTOPAMINE"
+        | "HISTAMINE"
+        | "TYRAMINE"
+        | "TYRAMINE-OCTOPAMINE" => Polarity::Excitatory,
         "GABA" | "GLYCINE" | "GLUTINHIB" => Polarity::Inhibitory,
         _ => Polarity::Unknown,
     }
@@ -138,7 +147,12 @@ struct Scratch {
 
 impl Scratch {
     fn new(n: usize) -> Self {
-        Self { lex: vec![0.0; n], lin: vec![0.0; n], touched: Vec::with_capacity(4096), bitmap: vec![0u64; (n + 63) / 64] }
+        Self {
+            lex: vec![0.0; n],
+            lin: vec![0.0; n],
+            touched: Vec::with_capacity(4096),
+            bitmap: vec![0u64; (n + 63) / 64],
+        }
     }
     fn reset(&mut self) {
         for &p in &self.touched {
@@ -175,8 +189,16 @@ impl Engine {
             .iter()
             .map(|s| nt_polarity(s))
             .collect();
-        let polarity: Vec<Polarity> = substrate.nt_type.iter().map(|&t| table[t as usize]).collect();
-        let mk = || (0..n_threads).map(|_| Mutex::new(vec![0.0f32; chunk_len])).collect();
+        let polarity: Vec<Polarity> = substrate
+            .nt_type
+            .iter()
+            .map(|&t| table[t as usize])
+            .collect();
+        let mk = || {
+            (0..n_threads)
+                .map(|_| Mutex::new(vec![0.0f32; chunk_len]))
+                .collect()
+        };
         Self {
             substrate,
             cfg,
@@ -224,7 +246,10 @@ impl Engine {
     /// Membrane potential of neuron `i` (for readout rate computation).
     pub fn membrane(&self, i: usize) -> f32 {
         let (c, l) = self.locate(i);
-        self.v[c].lock().map(|ch| ch.get(l).copied().unwrap_or(0.0)).unwrap_or(0.0)
+        self.v[c]
+            .lock()
+            .map(|ch| ch.get(l).copied().unwrap_or(0.0))
+            .unwrap_or(0.0)
     }
 
     /// Run `steps` ticks. `per_tick` is invoked after every tick with
@@ -235,7 +260,12 @@ impl Engine {
         steps: u32,
         per_tick: &mut dyn FnMut(&TickReport, &dyn EngineView),
     ) -> TickReport {
-        let current = TickReport { tick: self.tick, t_ms: self.t_ms, n_spikes: self.spikes_last, mean_v: 0.0 };
+        let current = TickReport {
+            tick: self.tick,
+            t_ms: self.t_ms,
+            n_spikes: self.spikes_last,
+            mean_v: 0.0,
+        };
         let mut last = current;
         if self.cfg.n_threads <= 1 {
             for _ in 0..steps {
@@ -299,8 +329,16 @@ impl Engine {
             let ge = self.g_exc[0].lock().unwrap();
             let gi = self.g_inh[0].lock().unwrap();
             if cfg.use_simd {
-                let (spikes, v_sum) =
-                    simd::integrate(&mut vv, &ge, &gi, cfg.v_rest, 1.0 - leak, cfg.input_gain, cfg.v_thresh, cfg.v_reset);
+                let (spikes, v_sum) = simd::integrate(
+                    &mut vv,
+                    &ge,
+                    &gi,
+                    cfg.v_rest,
+                    1.0 - leak,
+                    cfg.input_gain,
+                    cfg.v_thresh,
+                    cfg.v_reset,
+                );
                 let c = spikes.len() as u32;
                 (spikes, c, v_sum)
             } else {
@@ -333,7 +371,11 @@ impl Engine {
 
     // ---- parallel path ----
 
-    fn run_ticks_parallel(&mut self, steps: u32, per_tick: &mut dyn FnMut(&TickReport, &dyn EngineView)) -> TickReport {
+    fn run_ticks_parallel(
+        &mut self,
+        steps: u32,
+        per_tick: &mut dyn FnMut(&TickReport, &dyn EngineView),
+    ) -> TickReport {
         let n_threads = self.cfg.n_threads;
         let n = self.substrate.n_neurons();
         let chunk_len = self.chunk_len;
@@ -341,15 +383,28 @@ impl Engine {
         let decay_inh = (-self.cfg.dt_ms / self.cfg.tau_inh_ms).exp();
         let leak = (-self.cfg.dt_ms / self.cfg.tau_mem_ms).exp();
         let a = 1.0 - leak;
-        let (rest, gain, thresh, reset, w_scale, use_simd) =
-            (self.cfg.v_rest, self.cfg.input_gain, self.cfg.v_thresh, self.cfg.v_reset, self.cfg.weight_scale, self.cfg.use_simd);
+        let (rest, gain, thresh, reset, w_scale, use_simd) = (
+            self.cfg.v_rest,
+            self.cfg.input_gain,
+            self.cfg.v_thresh,
+            self.cfg.v_reset,
+            self.cfg.weight_scale,
+            self.cfg.use_simd,
+        );
 
-        let last_snap: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(std::mem::take(&mut self.last_spiked)));
-        let barriers: Vec<Arc<Barrier>> = (0..4).map(|_| Arc::new(Barrier::new(n_threads))).collect();
+        let last_snap: Arc<Mutex<Vec<u32>>> =
+            Arc::new(Mutex::new(std::mem::take(&mut self.last_spiked)));
+        let barriers: Vec<Arc<Barrier>> =
+            (0..4).map(|_| Arc::new(Barrier::new(n_threads))).collect();
         let spikes_pool: Arc<Mutex<Vec<Vec<u32>>>> = Arc::new(Mutex::new(Vec::new()));
         let vsum_pool: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
 
-        let mut last = TickReport { tick: self.tick, t_ms: self.t_ms, n_spikes: 0, mean_v: 0.0 };
+        let mut last = TickReport {
+            tick: self.tick,
+            t_ms: self.t_ms,
+            n_spikes: 0,
+            mean_v: 0.0,
+        };
 
         std::thread::scope(|s| {
             let substrate: &Substrate = &self.substrate;
@@ -361,16 +416,40 @@ impl Engine {
 
             let mut handles = Vec::new();
             for tid in 1..n_threads {
-                let (last_snap, barriers, spikes_pool, vsum_pool) =
-                    (last_snap.clone(), barriers.clone(), spikes_pool.clone(), vsum_pool.clone());
+                let (last_snap, barriers, spikes_pool, vsum_pool) = (
+                    last_snap.clone(),
+                    barriers.clone(),
+                    spikes_pool.clone(),
+                    vsum_pool.clone(),
+                );
                 let mut scratch = Scratch::new(n);
                 handles.push(s.spawn(move || {
                     for _ in 0..steps {
                         tick_phases(
-                            tid, n_threads, n, chunk_len, n_chunks, substrate, polarity, g_exc, g_inh, v,
-                            &last_snap, &barriers, &mut scratch,
-                            decay_exc, decay_inh, a, rest, gain, thresh, reset, use_simd, w_scale,
-                            &spikes_pool, &vsum_pool,
+                            tid,
+                            n_threads,
+                            n,
+                            chunk_len,
+                            n_chunks,
+                            substrate,
+                            polarity,
+                            g_exc,
+                            g_inh,
+                            v,
+                            &last_snap,
+                            &barriers,
+                            &mut scratch,
+                            decay_exc,
+                            decay_inh,
+                            a,
+                            rest,
+                            gain,
+                            thresh,
+                            reset,
+                            use_simd,
+                            w_scale,
+                            &spikes_pool,
+                            &vsum_pool,
                         );
                     }
                 }));
@@ -382,10 +461,30 @@ impl Engine {
             let mut local_t_ms = self.t_ms;
             for _ in 0..steps {
                 tick_phases(
-                    0, n_threads, n, chunk_len, n_chunks, substrate, polarity, g_exc, g_inh, v,
-                    &last_snap, &barriers, &mut scratch,
-                    decay_exc, decay_inh, a, rest, gain, thresh, reset, use_simd, w_scale,
-                    &spikes_pool, &vsum_pool,
+                    0,
+                    n_threads,
+                    n,
+                    chunk_len,
+                    n_chunks,
+                    substrate,
+                    polarity,
+                    g_exc,
+                    g_inh,
+                    v,
+                    &last_snap,
+                    &barriers,
+                    &mut scratch,
+                    decay_exc,
+                    decay_inh,
+                    a,
+                    rest,
+                    gain,
+                    thresh,
+                    reset,
+                    use_simd,
+                    w_scale,
+                    &spikes_pool,
+                    &vsum_pool,
                 );
                 let all_spikes = { std::mem::take(&mut *spikes_pool.lock().unwrap()) };
                 let mut flat: Vec<u32> = Vec::new();
@@ -582,8 +681,7 @@ fn tick_phases(
         let ge = g_exc[tid].lock().unwrap();
         let gi = g_inh[tid].lock().unwrap();
         let (sp, _n_spikes_chunk, sum) = if use_simd {
-            let (spikes, v_sum) =
-                simd::integrate(&mut vv, &ge, &gi, rest, a, gain, thresh, reset);
+            let (spikes, v_sum) = simd::integrate(&mut vv, &ge, &gi, rest, a, gain, thresh, reset);
             let c = spikes.len() as u32;
             (spikes, c, v_sum)
         } else {
