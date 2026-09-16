@@ -49,5 +49,9 @@ fn SidebarLayout() -> Element {
 }
 
 fn main() {
-    dioxus::launch(|| rsx! { Router::<Route> {} });
+    // client-only app: hydration requires SSR-injected data that static
+    // hosting does not have (atob(undefined) crash) — render fresh instead
+    dioxus::LaunchBuilder::web()
+        .with_cfg(dioxus_web::Config::new().hydrate(false))
+        .launch(|| rsx! { Router::<Route> {} });
 }

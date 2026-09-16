@@ -64,3 +64,42 @@ jobs:
         with:
           name: fly-admin-web
           path: target/dx/fly-admin/release/web/public/
+
+  bundle:
+    # Full self-contained package per architecture: fly-server binary +
+    # web admin dist. Needs both server (that arch) and web jobs first.
+    needs: [server, web]
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bundle-${{ matrix.os }}
+      - name: Build server (release)
+        run: cargo build -p fly-server --release
+      - name: Download web dist
+        uses: actions/download-artifact@v4
+        with:
+          name: fly-admin-web
+          path: admin-dist
+      - name: Package
+        run: |
+          mkdir -p pkg
+          cp target/release/fly-server pkg/
+          cp -r admin-dist pkg/admin-dist
+          cp README.md pkg/ 2>/dev/null || true
+          tar czf fly-server-${{ matrix.arch }}-linux.tar.gz -C pkg .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fly-server-${{ matrix.arch }}-linux
+          path: fly-server-${{ matrix.arch }}-linux.tar.gz

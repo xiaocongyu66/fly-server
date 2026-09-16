@@ -11,33 +11,65 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
-  build:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dx
+        run: |
+          curl -sL -o /tmp/dx.tar.gz \
+            https://github.com/DioxusLabs/dioxus/releases/latest/download/dx-x86_64-unknown-linux-gnu.tar.gz
+          tar xzf /tmp/dx.tar.gz -C /usr/local/bin
+      - name: Tailwind + dx build
+        working-directory: web
+        run: |
+          npm install
+          npx @tailwindcss/cli -i tailwind.css -o assets/main.css --minify
+          mkdir -p public/assets && cp assets/main.css public/assets/main.css
+          dx build --platform web --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fly-admin-web
+          path: target/dx/fly-admin/release/web/public/
+
+  bundle:
+    needs: [web]
     strategy:
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
-      - run: cargo build --release --target ${{ matrix.target }}
+          key: bundle-${{ matrix.os }}
+      - run: cargo build -p fly-server --release
+      - uses: actions/download-artifact@v4
+        with:
+          name: fly-admin-web
+          path: admin-dist
       - name: Package
         run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../fly-server-${{ matrix.target }}.tar.gz fly-server
-      - uses: actions/upload-artifact@v4
-        with:
-          name: fly-server-${{ matrix.target }}
-          path: fly-server-${{ matrix.target }}.tar.gz
+          mkdir -p pkg
+          cp target/release/fly-server pkg/
+          cp -r admin-dist pkg/admin-dist
+          tar czf fly-server-${{ matrix.arch }}-linux.tar.gz -C pkg .
       - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: fly-server-${{ matrix.target }}.tar.gz
+          files: fly-server-${{ matrix.arch }}-linux.tar.gz
