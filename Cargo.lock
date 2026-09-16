@@ -1311,6 +1311,7 @@ name = "fly-admin"
 version = "0.1.0"
 dependencies = [
  "dioxus",
+ "dioxus-web",
  "gloo-net",
  "registry",
  "serde",
