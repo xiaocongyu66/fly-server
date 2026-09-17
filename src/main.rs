@@ -153,14 +153,30 @@ fn cmd_bench(args: &[String]) -> i32 {
     0
 }
 
+/// Default data directory: `$HOME/.fly-server` (override with --data-dir).
+fn default_data_dir() -> PathBuf {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".into());
+    PathBuf::from(home).join(".fly-server")
+}
+
+/// Create the standard directory layout and return the root.
+fn init_data_dir(root: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(root.join("datasets"))?;
+    std::fs::create_dir_all(root.join("substrates"))?;
+    std::fs::create_dir_all(root.join("logs"))?;
+    Ok(())
+}
+
 fn cmd_serve(args: &[String]) -> i32 {
-    let substrate_path = match flag(args, "--substrate") {
-        Some(p) => PathBuf::from(p),
-        None => {
-            eprintln!("error: --substrate <path> required");
-            return 1;
-        }
-    };
+    let data_root = flag(args, "--data-dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(default_data_dir);
+    if let Err(e) = init_data_dir(&data_root) {
+        eprintln!("error: cannot init data dir {}: {e}", data_root.display());
+        return 1;
+    }
     let port: u16 = flag(args, "--port")
         .and_then(|p| p.parse().ok())
         .unwrap_or(8000);
@@ -169,6 +185,74 @@ fn cmd_serve(args: &[String]) -> i32 {
     let admin_pass = flag(args, "--admin-pass").unwrap_or_else(|| "flyserver".into());
     let admin_dist = flag(args, "--admin-dist").map(PathBuf::from);
     let cfg = parse_engine_cfg(args);
+
+    // substrate resolution: --substrate explicit, else data_dir/substrates/*.flybin
+    let substrate_path: PathBuf = match flag(args, "--substrate") {
+        Some(p) => PathBuf::from(p),
+        None => {
+            let dir = data_root.join("substrates");
+            match std::fs::read_dir(&dir)
+                .map(|rd| {
+                    let mut v: Vec<PathBuf> = rd
+                        .filter_map(|e| e.ok())
+                        .map(|e| e.path())
+                        .filter(|p| p.extension().map(|x| x == "flybin").unwrap_or(false))
+                        .collect();
+                    v.sort();
+                    v
+                })
+                .map(|mut v| v.pop())
+                .unwrap_or(None)
+            {
+                Some(p) => {
+                    eprintln!("auto: using {}", p.display());
+                    p
+                }
+                None => {
+                    // auto-deploy: download the lite tier and compile it
+                    eprintln!("auto: no substrate found — bootstrapping lite tier (FlyWire v783, ~28 MB)…");
+                    let lite_dir = data_root.join("datasets").join("lite");
+                    std::fs::create_dir_all(&lite_dir).ok();
+                    let raw = lite_dir.join("connections.csv.gz");
+                    let neurons = lite_dir.join("neurons.csv.gz");
+                    let lite_url = |name: &str| {
+                        format!(
+                            "https://raw.githubusercontent.com/ruvnet/RuVector/research/connectome-ruvector/examples/connectome-fly/assets/{name}"
+                        )
+                    };
+                    if fly_server::datasets::download_to(
+                        &lite_url("connections_princeton.csv.gz"),
+                        &raw,
+                    )
+                    .is_err()
+                    {
+                        eprintln!("error: lite download failed — pass --substrate explicitly");
+                        return 1;
+                    }
+                    if fly_server::datasets::download_to(&lite_url("neurons.csv.gz"), &neurons)
+                        .is_err()
+                    {
+                        eprintln!("error: neurons download failed");
+                        return 1;
+                    }
+                    let out = data_root.join("substrates").join("lite.flybin");
+                    match substrate::compile_flywire(&lite_dir, &out, substrate::Quant::U8) {
+                        Ok(r) => eprintln!(
+                            "auto: compiled {} neurons / {} edges → {}",
+                            r.n_neurons,
+                            r.n_edges_aggregated,
+                            out.display()
+                        ),
+                        Err(e) => {
+                            eprintln!("error: compile failed: {e}");
+                            return 1;
+                        }
+                    }
+                    out
+                }
+            }
+        }
+    };
     let substrate = match substrate::load(&substrate_path) {
         Ok(s) => Arc::new(s),
         Err(e) => {
@@ -183,11 +267,11 @@ fn cmd_serve(args: &[String]) -> i32 {
     let admin = Arc::new(fly_server::admin::AdminStore::new(
         &admin_user,
         &admin_pass,
-        PathBuf::from("admin_keys.json"),
+        data_root.join("fly.db"),
     ));
-    let datasets = Arc::new(fly_server::datasets::DatasetStore::new(PathBuf::from(
-        "data",
-    )));
+    let datasets = Arc::new(fly_server::datasets::DatasetStore::new(
+        data_root.join("datasets"),
+    ));
     eprintln!(
         "fly-server {} — substrate \"{}\": {} neurons, {} edges, threads={}, simd={}, admin=\"{}\", listening on {}:{}",
         fly_server::VERSION, substrate_id, substrate.n_neurons(), substrate.header.n_edges, cfg.n_threads, cfg.use_simd, admin_user, host, port

@@ -1,19 +1,21 @@
-//! Admin auth, API keys, and per-key usage accounting.
+//! Admin auth, API keys, and per-key usage accounting — SQLite backed.
 //!
-//! - One admin account (CLI-provided user/password, salted SHA-256).
-//! - Login returns a random bearer token (in-memory, 24h expiry).
-//! - API keys (`fly_sk_...`) gate /v1 business endpoints; admin token also
-//!   works everywhere. Keys persist to `admin_keys.json` next to the binary.
-//! - Usage (requests / ticks / sessions) is tracked per key id.
+//! Everything lives in `<data_dir>/fly.db` (auto-migrated on startup):
+//! - `api_keys(id, secret, name, created_at, enabled)`
+//! - `usage(key_id, requests, ticks, sessions)`
+//! - admin password config comes from CLI; tokens stay in memory (24h).
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use rusqlite::Connection;
+
 const TOKEN_TTL: Duration = Duration::from_secs(24 * 3600);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ApiKey {
     pub id: String,     // "key_<short>"
     pub secret: String, // "fly_sk_<hex>" — only shown once at creation;
@@ -23,7 +25,7 @@ pub struct ApiKey {
     pub enabled: bool,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct KeyUsage {
     pub requests: u64,
     pub ticks: u64,
@@ -39,20 +41,12 @@ pub struct KeyView {
     pub usage: KeyUsage,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
-struct Persisted {
-    keys: Vec<ApiKey>,
-    usage: HashMap<String, KeyUsage>,
-}
-
 pub struct AdminStore {
+    conn: Mutex<Connection>,
     admin_user: String,
     admin_pass_hash: [u8; 32],
     salt: String,
     tokens: Mutex<HashMap<String, Instant>>,
-    keys: Mutex<HashMap<String, ApiKey>>, // by id
-    usage: Mutex<HashMap<String, KeyUsage>>,
-    store_path: std::path::PathBuf,
 }
 
 fn rand_hex(n_bytes: usize) -> String {
@@ -69,7 +63,25 @@ fn now_secs() -> u64 {
 }
 
 impl AdminStore {
-    pub fn new(admin_user: &str, admin_pass: &str, store_path: std::path::PathBuf) -> Self {
+    pub fn new(admin_user: &str, admin_pass: &str, db_path: PathBuf) -> Self {
+        let conn = Connection::open(&db_path).expect("open fly.db");
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS api_keys (
+                    id TEXT PRIMARY KEY,
+                    secret TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1
+                );
+                CREATE TABLE IF NOT EXISTS usage (
+                    key_id TEXT PRIMARY KEY,
+                    requests INTEGER NOT NULL DEFAULT 0,
+                    ticks INTEGER NOT NULL DEFAULT 0,
+                    sessions_created INTEGER NOT NULL DEFAULT 0
+                );",
+        )
+        .expect("migrate fly.db");
+
         let salt = rand_hex(8);
         let admin_pass_hash: [u8; 32] = {
             use sha2::{Digest, Sha256};
@@ -78,38 +90,12 @@ impl AdminStore {
             h.update(admin_pass.as_bytes());
             h.finalize().into()
         };
-        let store = Self {
+        Self {
+            conn: Mutex::new(conn),
             admin_user: admin_user.to_string(),
             admin_pass_hash,
             salt,
             tokens: Mutex::new(HashMap::new()),
-            keys: Mutex::new(HashMap::new()),
-            usage: Mutex::new(HashMap::new()),
-            store_path,
-        };
-        store.load_disk();
-        store
-    }
-
-    fn load_disk(&self) {
-        if let Ok(text) = std::fs::read_to_string(&self.store_path) {
-            if let Ok(p) = serde_json::from_str::<Persisted>(&text) {
-                let mut keys = self.keys.lock().unwrap();
-                for k in p.keys {
-                    keys.insert(k.id.clone(), k);
-                }
-                *self.usage.lock().unwrap() = p.usage;
-            }
-        }
-    }
-
-    fn save_disk(&self) {
-        let p = Persisted {
-            keys: self.keys.lock().unwrap().values().cloned().collect(),
-            usage: self.usage.lock().unwrap().clone(),
-        };
-        if let Ok(text) = serde_json::to_string_pretty(&p) {
-            let _ = std::fs::write(&self.store_path, text);
         }
     }
 
@@ -135,7 +121,6 @@ impl AdminStore {
 
     pub fn verify_token(&self, token: &str) -> bool {
         let mut tokens = self.tokens.lock().unwrap();
-        // drop expired
         tokens.retain(|_, exp| *exp > Instant::now());
         tokens.contains_key(token)
     }
@@ -148,64 +133,77 @@ impl AdminStore {
             created_at: now_secs(),
             enabled: true,
         };
-        self.keys
+        self.conn
             .lock()
             .unwrap()
-            .insert(key.id.clone(), key.clone());
-        self.usage
+            .execute(
+                "INSERT INTO api_keys (id, secret, name, created_at, enabled) VALUES (?1, ?2, ?3, ?4, 1)",
+                rusqlite::params![key.id, key.secret, key.name, key.created_at as i64],
+            )
+            .ok();
+        self.conn
             .lock()
             .unwrap()
-            .entry(key.id.clone())
-            .or_default();
-        self.save_disk();
+            .execute(
+                "INSERT OR IGNORE INTO usage (key_id) VALUES (?1)",
+                rusqlite::params![key.id],
+            )
+            .ok();
         key
     }
 
     pub fn list_keys(&self) -> Vec<KeyView> {
-        let usage = self.usage.lock().unwrap();
-        let mut out: Vec<KeyView> = self
-            .keys
-            .lock()
-            .unwrap()
-            .values()
-            .map(|k| KeyView {
-                id: k.id.clone(),
-                name: k.name.clone(),
-                created_at: k.created_at,
-                enabled: k.enabled,
-                usage: usage.get(&k.id).cloned().unwrap_or_default(),
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT k.id, k.name, k.created_at, k.enabled,
+                        COALESCE(u.requests,0), COALESCE(u.ticks,0), COALESCE(u.sessions_created,0)
+                 FROM api_keys k LEFT JOIN usage u ON u.key_id = k.id
+                 ORDER BY k.created_at DESC",
+            )
+            .expect("list query");
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(KeyView {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    created_at: row.get::<_, i64>(2)? as u64,
+                    enabled: row.get::<_, i64>(3)? != 0,
+                    usage: KeyUsage {
+                        requests: row.get::<_, i64>(4)? as u64,
+                        ticks: row.get::<_, i64>(5)? as u64,
+                        sessions_created: row.get::<_, i64>(6)? as u64,
+                    },
+                })
             })
-            .collect();
-        out.sort_by_key(|k| std::cmp::Reverse(k.created_at));
-        out
+            .expect("list query map");
+        rows.filter_map(|r| r.ok()).collect()
     }
 
     pub fn set_key_enabled(&self, id: &str, enabled: bool) -> bool {
-        let hit = self
-            .keys
+        self.conn
             .lock()
             .unwrap()
-            .get_mut(id)
-            .map(|k| k.enabled = enabled)
-            .is_some();
-        if hit {
-            self.save_disk();
-        }
-        hit
+            .execute(
+                "UPDATE api_keys SET enabled = ?1 WHERE id = ?2",
+                rusqlite::params![enabled as i64, id],
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false)
     }
 
     /// Returns the key id when the secret is valid and enabled.
     pub fn verify_key(&self, secret: &str) -> Option<String> {
-        self.keys
-            .lock()
-            .unwrap()
-            .values()
-            .find(|k| k.secret == secret && k.enabled)
-            .map(|k| k.id.clone())
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id FROM api_keys WHERE secret = ?1 AND enabled = 1",
+            rusqlite::params![secret],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
     }
 
     /// Auth resolution: admin token takes precedence, then API key secret.
-    /// Returns ("admin", None) or ("key", Some(key_id)).
     pub fn authorize(&self, bearer: &str) -> Option<(String, Option<String>)> {
         if self.verify_token(bearer) {
             return Some(("admin".into(), None));
@@ -213,7 +211,6 @@ impl AdminStore {
         self.verify_key(bearer).map(|id| ("key".into(), Some(id)))
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn record_usage(
         &self,
         key_id: Option<&str>,
@@ -222,24 +219,31 @@ impl AdminStore {
         sessions_created: u64,
     ) {
         if let Some(id) = key_id {
-            let mut usage = self.usage.lock().unwrap();
-            let u = usage.entry(id.to_string()).or_default();
-            u.requests += requests;
-            u.ticks += ticks;
-            u.sessions_created += sessions_created;
-            drop(usage);
-            self.save_disk();
+            self.conn
+                .lock()
+                .unwrap()
+                .execute(
+                    "UPDATE usage SET requests = requests + ?1, ticks = ticks + ?2,
+                     sessions_created = sessions_created + ?3 WHERE key_id = ?4",
+                    rusqlite::params![requests as i64, ticks as i64, sessions_created as i64, id],
+                )
+                .ok();
         }
     }
 
     pub fn total_usage(&self) -> KeyUsage {
-        let usage = self.usage.lock().unwrap();
-        let mut t = KeyUsage::default();
-        for u in usage.values() {
-            t.requests += u.requests;
-            t.ticks += u.ticks;
-            t.sessions_created += u.sessions_created;
-        }
-        t
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(SUM(requests),0), COALESCE(SUM(ticks),0), COALESCE(SUM(sessions_created),0) FROM usage",
+            [],
+            |row| {
+                Ok(KeyUsage {
+                    requests: row.get::<_, i64>(0)? as u64,
+                    ticks: row.get::<_, i64>(1)? as u64,
+                    sessions_created: row.get::<_, i64>(2)? as u64,
+                })
+            },
+        )
+        .unwrap_or_default()
     }
 }

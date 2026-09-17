@@ -184,6 +184,11 @@ impl DatasetStore {
     }
 }
 
+/// One-shot download to a path (no progress callback) — bootstrap path.
+pub fn download_to(url: &str, out_path: &std::path::Path) -> Result<u64, String> {
+    stream_to_file(url, out_path, &|_| {})
+}
+
 /// Stream a URL to a file, reporting progress in bytes.
 pub fn stream_to_file(
     url: &str,
