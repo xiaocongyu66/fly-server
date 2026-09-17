@@ -47,6 +47,8 @@ export function Sessions() {
       } catch { /* ignore */ }
       refresh()
     })()
+    const h = setInterval(refresh, 5000)
+    return () => clearInterval(h)
   }, [refresh])
 
   async function createSession() {

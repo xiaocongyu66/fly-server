@@ -27,7 +27,8 @@ export function Dashboard() {
   const [err, setErr] = useState("")
 
   useEffect(() => {
-    ;(async () => {
+    const h = setInterval(() => {
+      ;(async () => {
       try {
         const m = await api.get("/v1/models")
         const s = m.data?.[0] ?? {}
@@ -43,10 +44,12 @@ export function Dashboard() {
       } catch { /* ignore */ }
       try {
         const v = await api.get("/v1/admin/usage")
-        setTicks(String(v.total?.ticks ?? 0))
-        setRequests(String(v.total?.requests ?? 0))
-      } catch { /* ignore */ }
-    })()
+          setTicks(String(v.total?.ticks ?? 0))
+          setRequests(String(v.total?.requests ?? 0))
+        } catch { /* ignore */ }
+      })()
+    }, 5000)
+    return () => clearInterval(h)
   }, [])
 
   return (

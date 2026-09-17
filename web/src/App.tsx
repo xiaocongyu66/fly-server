@@ -1,5 +1,5 @@
-import { useState } from "react"
-import { token } from "@/api"
+import { useEffect, useState } from "react"
+import { token, clearToken } from "@/api"
 import { Login } from "@/pages/Login"
 import { Dashboard } from "@/pages/Dashboard"
 import { Sessions } from "@/pages/Sessions"
@@ -30,7 +30,32 @@ const NAV: { key: Page; label: string; icon: typeof Menu }[] = [
 
 export default function App() {
   const { lang, setLang, t } = useI18n()
-  const [authed, setAuthed] = useState(!!token())
+  const [authed, setAuthed] = useState<boolean | null>(!!token() ? null : false)
+
+  // startup token validation: a stale/fake token is rejected by any /v1 call
+  useEffect(() => {
+    if (authed !== null) return
+    ;(async () => {
+      try {
+        await fetch(`${window.location.origin}/v1/models`, {
+          headers: { Authorization: `Bearer ${token() ?? ""}` },
+        }).then((r) => {
+          if (r.status === 401) {
+            clearToken()
+            setAuthed(false)
+          } else {
+            setAuthed(true)
+          }
+        })
+      } catch {
+        setAuthed(true) // network down: don't lock the user out
+      }
+    })()
+  }, [authed])
+
+  if (authed === null) {
+    return <div className="min-h-screen bg-background" />
+  }
   const [page, setPage] = useState<Page>("dashboard")
   const [sheetOpen, setSheetOpen] = useState(false)
 
