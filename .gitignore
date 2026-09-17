@@ -13,3 +13,5 @@ admin_keys.json
 fly-server
 fly-server-aarch64
 admin-dist/
+web/tsconfig.tsbuildinfo
+*.tsbuildinfo
