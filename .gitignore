@@ -10,3 +10,5 @@ web/dist/
 web/assets/main.css
 web/public/
 admin_keys.json
+fly-server
+fly-server-aarch64
