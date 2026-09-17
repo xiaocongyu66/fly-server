@@ -1,6 +1,6 @@
 //! API client: token persistence + fetch helpers.
 
-use gloo_net::http::Request;
+use gloo_net::http::RequestBuilder;
 use serde_json::Value;
 use wasm_bindgen::JsValue;
 
@@ -37,10 +37,13 @@ async fn send(method: &str, path: &str, body: Option<String>) -> Result<Value, S
     let token = token().unwrap_or_default();
     let auth = format!("Bearer {token}");
     let req = match method {
-        "GET" => Request::get(&url),
-        "POST" => Request::post(&url),
-        "DELETE" => Request::delete(&url),
-        _ => Request::get(&url),
+        "GET" => RequestBuilder::get(&url),
+        "POST" => RequestBuilder::post(&url),
+        "DELETE" => RequestBuilder::delete(&url),
+        "PATCH" => {
+            RequestBuilder::new(&url).method(gloo_net::http::Method::PATCH)
+        }
+        _ => RequestBuilder::get(&url),
     }
     .header("Authorization", &auth);
     let req = match body {
