@@ -31,6 +31,7 @@ pub fn run_server(
     engine_cfg: crate::engine::EngineConfig,
     admin_dist: Option<std::path::PathBuf>,
     admin: Arc<AdminStore>,
+    datasets: Arc<crate::datasets::DatasetStore>,
     host: &str,
 ) -> std::io::Result<()> {
     let mgr = Arc::new(SessionManager::new(substrate, substrate_id, engine_cfg));
@@ -42,7 +43,7 @@ pub fn run_server(
                 }
             }
         }
-        route(&mgr, &admin, req)
+        route(&mgr, &admin, &datasets, req)
     })
 }
 
@@ -59,7 +60,12 @@ fn bearer(req: &HttpRequest) -> Option<&str> {
     req.query.get("token").map(String::as_str)
 }
 
-fn route(mgr: &SessionManager, admin: &AdminStore, req: &HttpRequest) -> HttpResponse {
+fn route(
+    mgr: &SessionManager,
+    admin: &AdminStore,
+    datasets: &Arc<crate::datasets::DatasetStore>,
+    req: &HttpRequest,
+) -> HttpResponse {
     let segs: Vec<&str> = req
         .path
         .trim_matches('/')
@@ -104,13 +110,14 @@ fn route(mgr: &SessionManager, admin: &AdminStore, req: &HttpRequest) -> HttpRes
         Err(resp) => return resp,
     };
 
-    let resp = route_authed(mgr, admin, role.as_str(), &key_id, req, &segs);
+    let resp = route_authed(mgr, admin, datasets, role.as_str(), &key_id, req, &segs);
     resp
 }
 
 fn route_authed(
     mgr: &SessionManager,
     admin: &AdminStore,
+    datasets: &Arc<crate::datasets::DatasetStore>,
     role: &str,
     key_id: &Option<String>,
     req: &HttpRequest,
@@ -157,6 +164,16 @@ fn route_authed(
                 "total": admin.total_usage(),
                 "keys": admin.list_keys(),
             })),
+            ("GET", Some("datasets"), None, _) => json_ok(datasets.list()),
+            ("POST", Some("datasets"), Some(tier), Some("download")) => {
+                match datasets.start_download(tier) {
+                    Ok(()) => json_ok(serde_json::json!({"tier": tier, "started": true})),
+                    Err(e) => json_err(&ApiError::invalid_request("download_error", e, None)),
+                }
+            }
+            ("GET", Some("datasets"), Some("status"), None) => {
+                json_ok(serde_json::json!({"tiers": datasets.list()}))
+            }
             _ => HttpResponse::not_found_json(),
         };
     }
@@ -325,18 +342,21 @@ mod tests {
             "test-substrate".into(),
             crate::engine::EngineConfig::default(),
         );
+        let datasets = std::sync::Arc::new(crate::datasets::DatasetStore::new(
+            std::path::PathBuf::from("/tmp/agent-datasets"),
+        ));
         let admin = crate::admin::AdminStore::new(
             "admin",
             "pw",
             std::path::PathBuf::from("/tmp/test_keys1.json"),
         );
-        let r = route(&mgr, &admin, &req("GET", "/health", ""));
+        let r = route(&mgr, &admin, &datasets, &req("GET", "/health", ""));
         assert_eq!(r.status, 200);
         let key = admin.create_key("t");
         let mut req = req("GET", "/v1/models", "");
         req.headers
             .push(("authorization".into(), format!("Bearer {}", key.secret)));
-        let r = route(&mgr, &admin, &req);
+        let r = route(&mgr, &admin, &datasets, &req);
         let Body::Bytes(b) = r.body else { panic!() };
         let s = String::from_utf8(b).unwrap();
         assert!(s.contains("test-substrate"));
@@ -349,6 +369,9 @@ mod tests {
             "test-substrate".into(),
             crate::engine::EngineConfig::default(),
         );
+        let datasets = std::sync::Arc::new(crate::datasets::DatasetStore::new(
+            std::path::PathBuf::from("/tmp/agent-datasets"),
+        ));
         let admin = crate::admin::AdminStore::new(
             "admin",
             "pw",
@@ -359,7 +382,7 @@ mod tests {
             let mut rq = req(method, path, body);
             rq.headers
                 .push(("authorization".into(), format!("Bearer {}", key.secret)));
-            route(&mgr, &admin, &rq)
+            route(&mgr, &admin, &datasets, &rq)
         };
         let r = authed("POST", "/v1/sessions", r#"{"substrate":"test-substrate"}"#);
         assert_eq!(r.status, 200);
@@ -371,7 +394,7 @@ mod tests {
         assert_eq!(r.status, 200);
 
         // unauthenticated: 401 (does not leak route existence)
-        assert_eq!(route(&mgr, &admin, &req("GET", "/nope", "")).status, 401);
+        assert_eq!(route(&mgr, &admin, &datasets, &req("GET", "/nope", "")).status, 401);
         let r = authed("GET", "/nope", "");
         assert_eq!(r.status, 404);
     }

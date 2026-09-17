@@ -185,11 +185,14 @@ fn cmd_serve(args: &[String]) -> i32 {
         &admin_pass,
         PathBuf::from("admin_keys.json"),
     ));
+    let datasets = Arc::new(fly_server::datasets::DatasetStore::new(PathBuf::from(
+        "data",
+    )));
     eprintln!(
         "fly-server {} — substrate \"{}\": {} neurons, {} edges, threads={}, simd={}, admin=\"{}\", listening on {}:{}",
         fly_server::VERSION, substrate_id, substrate.n_neurons(), substrate.header.n_edges, cfg.n_threads, cfg.use_simd, admin_user, host, port
     );
-    match api::run_server(substrate, substrate_id, port, cfg, admin_dist, admin, &host) {
+    match api::run_server(substrate, substrate_id, port, cfg, admin_dist, admin, datasets, &host) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("error: {e}");
