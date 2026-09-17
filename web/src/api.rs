@@ -40,7 +40,6 @@ async fn send(method: &str, path: &str, body: Option<String>) -> Result<Value, S
         "GET" => Request::get(&url),
         "POST" => Request::post(&url),
         "DELETE" => Request::delete(&url),
-        "PATCH" => Request::new(&gloo_net::http::Method::PATCH, &url),
         _ => Request::get(&url),
     }
     .header("Authorization", &auth);
