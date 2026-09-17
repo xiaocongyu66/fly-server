@@ -1,0 +1,101 @@
+import { useState } from "react"
+import { token } from "@/api"
+import { Login } from "@/pages/Login"
+import { Dashboard } from "@/pages/Dashboard"
+import { Sessions } from "@/pages/Sessions"
+import { Activity } from "@/pages/Activity"
+import { Keys } from "@/pages/Keys"
+import { Button } from "@/components/ui/button"
+import { Separator } from "@/components/ui/separator"
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet"
+import { Menu, LayoutDashboard, Boxes, Activity as ActivityIcon, KeyRound } from "lucide-react"
+
+type Page = "dashboard" | "sessions" | "activity" | "keys"
+
+const NAV: { key: Page; label: string; icon: typeof Menu }[] = [
+  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { key: "sessions", label: "Sessions", icon: Boxes },
+  { key: "activity", label: "Live activity", icon: ActivityIcon },
+  { key: "keys", label: "Keys & billing", icon: KeyRound },
+]
+
+export default function App() {
+  const [authed, setAuthed] = useState(!!token())
+  const [page, setPage] = useState<Page>("dashboard")
+  const [sheetOpen, setSheetOpen] = useState(false)
+
+  if (!authed) return <Login onDone={() => setAuthed(true)} />
+
+  function goto(p: Page) {
+    setPage(p)
+    setSheetOpen(false)
+  }
+
+  function navItems(onClick?: (p: Page) => void) {
+    return NAV.map(({ key, label, icon: Icon }) => (
+      <button
+        key={key}
+        className={
+          "w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors " +
+          (page === key
+            ? "bg-accent text-accent-foreground font-medium"
+            : "text-muted-foreground hover:bg-accent hover:text-accent-foreground")
+        }
+        onClick={() => onClick?.(key)}
+      >
+        <Icon className="size-4" />
+        {label}
+      </button>
+    ))
+  }
+
+  const content =
+    page === "dashboard" ? <Dashboard />
+    : page === "sessions" ? <Sessions />
+    : page === "activity" ? <Activity />
+    : <Keys />
+
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      {/* mobile top bar */}
+      <header className="md:hidden sticky top-0 z-50 flex items-center gap-2 border-b bg-background px-4 h-12">
+        <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+          <SheetTrigger render={<Button variant="ghost" size="icon" className="size-8" />}>
+            <Menu className="size-5" />
+          </SheetTrigger>
+          <SheetContent side="left" className="w-56 p-4">
+            <SheetHeader>
+              <SheetTitle>🪰 fly-admin</SheetTitle>
+            </SheetHeader>
+            <nav className="mt-2 space-y-1">{navItems(goto)}</nav>
+            <Separator className="my-3" />
+            <Button variant="ghost" size="sm" onClick={() => { setAuthed(false) }}>
+              Sign out
+            </Button>
+          </SheetContent>
+        </Sheet>
+        <div className="font-bold">🪰 fly-admin</div>
+      </header>
+
+      <div className="flex">
+        {/* desktop sidebar */}
+        <aside className="hidden md:flex w-52 shrink-0 border-r p-4 flex-col sticky top-0 h-screen">
+          <div className="text-lg font-bold mb-4">🪰 fly-admin</div>
+          <nav className="space-y-1">{navItems(setPage)}</nav>
+          <div className="mt-auto">
+            <Button variant="ghost" size="sm" onClick={() => setAuthed(false)}>
+              Sign out
+            </Button>
+          </div>
+        </aside>
+        <main className="flex-1 min-w-0">{content}</main>
+      </div>
+    </div>
+  )
+}

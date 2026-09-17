@@ -13,33 +13,20 @@ env:
 jobs:
   web:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install dx
-        run: |
-          curl -sL -o /tmp/dx.tar.gz \
-            https://github.com/DioxusLabs/dioxus/releases/latest/download/dx-x86_64-unknown-linux-gnu.tar.gz
-          tar xzf /tmp/dx.tar.gz -C /usr/local/bin
-      - name: Tailwind + dx build
-        working-directory: web
-        run: |
-          npm install
-          npx @tailwindcss/cli -i tailwind.css -o assets/main.css --minify
-          mkdir -p public/assets && cp assets/main.css public/assets/main.css
-          dx build --platform web --release
+      - run: npm ci
+      - run: npm run build
       - uses: actions/upload-artifact@v4
         with:
           name: fly-admin-web
-          path: target/dx/fly-admin/release/web/public/
+          path: web/dist/
 
   bundle:
     needs: [web]
@@ -53,12 +40,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: bundle-${{ matrix.os }}
+          key: release-bundle-${{ matrix.os }}
       - run: cargo build -p fly-server --release
       - uses: actions/download-artifact@v4
         with:
