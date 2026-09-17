@@ -26,10 +26,7 @@ fn main() {
     // hosting has no injected hydration data (atob(undefined) crash).
     // hydrate(false) at runtime is the only working off-switch.
     dioxus::LaunchBuilder::web()
-        .with_cfg(dioxus_web::Config {
-            hydrate: false,
-            ..Default::default()
-        })
+        .with_cfg(dioxus_web::Config::new())
         .launch(|| rsx! { Router::<Route> {} });
 }
 
