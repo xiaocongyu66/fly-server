@@ -63,7 +63,7 @@ pub fn Login(on_done: EventHandler) -> Element {
                             busy.set(false);
                         }
                     },
-                    if busy.read().as_str() == "true" { "Signing in…" } else { "Sign in" }
+                    if busy() { "Signing in…" } else { "Sign in" }
                 }
                 p { class: "mt-3 text-[10px] text-muted-foreground", "default: admin / flyserver" }
             }
@@ -336,7 +336,7 @@ pub fn Activity() -> Element {
                                 let data = e.data().as_string().unwrap_or_default();
                                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
                                     let n = v["n_spikes"].as_u64().unwrap_or(0);
-                                    total.set(total.read() + n);
+                                    total.with_mut(|t| *t += n);
                                     let mut b = bars.write();
                                     b.push(n);
                                     if b.len() > 120 { b.remove(0); }
@@ -347,7 +347,7 @@ pub fn Activity() -> Element {
                             connected.set(true);
                         });
                     },
-                    if connected.read().as_str() == "true" { "Connected ✓" } else { "Connect" }
+                    if connected() { "Connected ✓" } else { "Connect" }
                 }
                 div { class: "text-sm text-muted-foreground", "total spikes: {total}" }
             }

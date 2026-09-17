@@ -35,10 +35,19 @@ pub fn base() -> String {
 async fn send(method: &str, path: &str, body: Option<String>) -> Result<Value, String> {
     let url = format!("{}{}", base(), path);
     let token = token().unwrap_or_default();
-    let mut req = Request::new(method, &url).header("Authorization", &format!("Bearer {token}"));
-    if let Some(b) = body {
-        req = req.header("Content-Type", "application/json").body(b);
+    let auth = format!("Bearer {token}");
+    let req = match method {
+        "GET" => Request::get(&url),
+        "POST" => Request::post(&url),
+        "DELETE" => Request::delete(&url),
+        "PATCH" => Request::method(gloo_net::http::Method::PATCH, &url),
+        _ => Request::get(&url),
     }
+    .header("Authorization", &auth);
+    let req = match body {
+        Some(b) => req.header("Content-Type", "application/json").body(b),
+        None => req,
+    };
     let resp = req.send().await.map_err(|e| format!("network: {e:?}"))?;
     let status = resp.status();
     let text = resp.text().await.map_err(|e| format!("read: {e:?}"))?;

@@ -27,7 +27,7 @@ fn main() {
 #[component]
 fn Shell() -> Element {
     // auth gate: no token -> login screen
-    let authed = use_signal(|| api::token().is_some());
+    let mut authed = use_signal(|| api::token().is_some());
     if !authed() {
         return rsx! { Login { on_done: move |_| authed.set(true) } };
     }
