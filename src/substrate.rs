@@ -282,6 +282,9 @@ impl Substrate {
                 }
                 matched.push(i as u32);
             }
+        } else {
+            // no filter: match every neuron (caller stride-samples via limit)
+            matched.extend(0..n as u32);
         }
         matched
     }

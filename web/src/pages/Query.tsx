@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 import * as api from "@/api"
-import { getSettings } from "@/settings"
-import { llmParseQuery, parseQuery, type ParseResult } from "@/queryParser"
+import { parseQuery, type ParseResult } from "@/queryParser"
 import { useI18n } from "@/i18n"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -53,13 +52,21 @@ export function Query() {
     try {
       const parsed =
         mode === "llm"
-          ? await llmParseQuery(
-              q,
-              knownRegions,
-              getSettings().llmEndpoint,
-              getSettings().llmKey,
-              getSettings().llmModel || "gpt-4o-mini"
-            )
+          ? await (async () => {
+              const sel = await api.post("/v1/query/llm", { query: q })
+              const tokens: string[] = []
+              if (sel.region) tokens.push(`region:${sel.region}`)
+              if (sel.cell_type) tokens.push(`cell_type:${sel.cell_type}`)
+              if (sel.nt_type) tokens.push(`nt:${sel.nt_type}`)
+              if (sel.limit) tokens.push(`limit:${sel.limit}`)
+              return {
+                region: sel.region ?? null,
+                cell_type: sel.cell_type ?? null,
+                nt_type: sel.nt_type ?? null,
+                limit: sel.limit ?? null,
+                tokens,
+              }
+            })()
           : parseQuery(q, knownRegions)
       setResult(parsed)
 

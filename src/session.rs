@@ -84,12 +84,19 @@ impl SessionManager {
     }
 
     /// Session summaries for the admin UI list view.
+    pub fn regions(&self) -> Vec<String> {
+        self.substrate.header.string_tables.regions.clone()
+    }
+
     /// Resolve a selector directly against the substrate (no session).
     pub fn query(&self, sel: &crate::types::NeuronSelector) -> serde_json::Value {
         let matched = self.substrate.select(sel);
         let count = matched.len() as u64;
         let limit = (sel.limit.unwrap_or(25).min(1000) as usize).min(matched.len());
-        let neurons = self.substrate.selected_details(&matched[..limit]);
+        // even stride sampling when the match set exceeds the limit
+        let stride = matched.len().checked_div(limit).unwrap_or(1);
+        let picked: Vec<u32> = (0..limit).map(|i| matched[i * stride]).collect();
+        let neurons = self.substrate.selected_details(&picked);
         serde_json::json!({"count": count, "returned": neurons.len(), "neurons": neurons})
     }
 

@@ -33,6 +33,7 @@ pub fn run_server(
     admin_dist: Option<std::path::PathBuf>,
     admin: Arc<AdminStore>,
     datasets: Arc<crate::datasets::DatasetStore>,
+    llm: Arc<crate::llm::LlmConfig>,
     host: &str,
 ) -> std::io::Result<()> {
     let mgr = Arc::new(SessionManager::new(substrate, substrate_id, engine_cfg));
@@ -44,7 +45,7 @@ pub fn run_server(
                 }
             }
         }
-        route(&mgr, &admin, &datasets, req)
+        route(&mgr, &admin, &datasets, &llm, req)
     })
 }
 
@@ -65,6 +66,7 @@ fn route(
     mgr: &SessionManager,
     admin: &AdminStore,
     datasets: &Arc<crate::datasets::DatasetStore>,
+    llm: &crate::llm::LlmConfig,
     req: &HttpRequest,
 ) -> HttpResponse {
     let segs: Vec<&str> = req
@@ -111,14 +113,25 @@ fn route(
         Err(resp) => return resp,
     };
 
-    let resp = route_authed(mgr, admin, datasets, role.as_str(), &key_id, req, &segs);
+    let resp = route_authed(
+        mgr,
+        admin,
+        datasets,
+        llm,
+        role.as_str(),
+        &key_id,
+        req,
+        &segs,
+    );
     resp
 }
 
+#[allow(clippy::too_many_arguments)]
 fn route_authed(
     mgr: &SessionManager,
     admin: &AdminStore,
     datasets: &Arc<crate::datasets::DatasetStore>,
+    llm: &crate::llm::LlmConfig,
     role: &str,
     key_id: &Option<String>,
     req: &HttpRequest,
@@ -184,6 +197,29 @@ fn route_authed(
 
     match (req.method.as_str(), segs) {
         ("GET", ["v1", "models"]) => json_ok(mgr.models()),
+
+        ("POST", ["v1", "query", "llm"]) => match parse_body::<serde_json::Value>(req) {
+            Ok(b) => {
+                let q = b
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if q.is_empty() {
+                    return json_err(&ApiError::invalid_request(
+                        "empty_query",
+                        "query is required",
+                        Some("query"),
+                    ));
+                }
+                let regions: Vec<String> = mgr.regions();
+                match crate::llm::parse_via_llm(llm, &q, &regions) {
+                    Ok(sel_json) => json_ok(sel_json),
+                    Err(e) => json_err(&ApiError::invalid_request("llm_error", e, None)),
+                }
+            }
+            Err(resp) => resp,
+        },
 
         ("POST", ["v1", "query"]) => match parse_body::<crate::types::NeuronSelector>(req) {
             Ok(b) => json_ok(mgr.query(&b)),
@@ -365,13 +401,15 @@ mod tests {
             "pw",
             std::path::PathBuf::from("/tmp/test_keys1.json"),
         );
-        let r = route(&mgr, &admin, &datasets, &req("GET", "/health", ""));
+        let llm = crate::llm::LlmConfig::default();
+        let r = route(&mgr, &admin, &datasets, &llm, &req("GET", "/health", ""));
         assert_eq!(r.status, 200);
         let key = admin.create_key("t");
         let mut req = req("GET", "/v1/models", "");
         req.headers
             .push(("authorization".into(), format!("Bearer {}", key.secret)));
-        let r = route(&mgr, &admin, &datasets, &req);
+        let llm = crate::llm::LlmConfig::default();
+        let r = route(&mgr, &admin, &datasets, &llm, &req);
         let Body::Bytes(b) = r.body else { panic!() };
         let s = String::from_utf8(b).unwrap();
         assert!(s.contains("test-substrate"));
@@ -393,11 +431,12 @@ mod tests {
             std::path::PathBuf::from("/tmp/test_keys2.json"),
         );
         let key = admin.create_key("t");
+        let llm = crate::llm::LlmConfig::default();
         let authed = |method: &str, path: &str, body: &str| {
             let mut rq = req(method, path, body);
             rq.headers
                 .push(("authorization".into(), format!("Bearer {}", key.secret)));
-            route(&mgr, &admin, &datasets, &rq)
+            route(&mgr, &admin, &datasets, &llm, &rq)
         };
         let r = authed("POST", "/v1/sessions", r#"{"substrate":"test-substrate"}"#);
         assert_eq!(r.status, 200);
@@ -410,7 +449,7 @@ mod tests {
 
         // unauthenticated: 401 (does not leak route existence)
         assert_eq!(
-            route(&mgr, &admin, &datasets, &req("GET", "/nope", "")).status,
+            route(&mgr, &admin, &datasets, &llm, &req("GET", "/nope", "")).status,
             401
         );
         let r = authed("GET", "/nope", "");

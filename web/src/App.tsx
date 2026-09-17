@@ -122,7 +122,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       {/* mobile top bar */}
-      <header className="md:hidden sticky top-0 z-50 flex items-center gap-2 border-b bg-background px-4 h-12">
+      <header className="md:hidden sticky top-0 z-50 flex items-center gap-2 border-b border-sidebar-border bg-sidebar px-4 h-12">
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
           <SheetTrigger render={<Button variant="ghost" size="icon" className="size-8" />}>
             <Menu className="size-5" />
@@ -142,9 +142,9 @@ export default function App() {
         <div className="ml-auto">{langButton()}</div>
       </header>
 
-      <div className="flex">
-        {/* desktop sidebar */}
-        <aside className="hidden md:flex w-52 shrink-0 border-r p-4 flex-col sticky top-0 h-screen">
+      <div className="flex min-h-screen flex-col lg:pl-[288px]">
+        {/* desktop sidebar — grok2api style fixed rail */}
+        <aside className="fixed inset-y-0 left-0 z-30 hidden h-screen w-[288px] flex-col overflow-hidden bg-sidebar px-4 py-6 lg:flex">
           <div className="flex items-center justify-between mb-4">
             <div className="text-lg font-bold">🪰 fly-admin</div>
             {langButton()}

@@ -272,6 +272,11 @@ fn cmd_serve(args: &[String]) -> i32 {
     let datasets = Arc::new(fly_server::datasets::DatasetStore::new(
         data_root.join("datasets"),
     ));
+    let llm = Arc::new(fly_server::llm::LlmConfig {
+        url: flag(args, "--llm-url"),
+        key: flag(args, "--llm-key"),
+        model: flag(args, "--llm-model").unwrap_or_else(|| "default".into()),
+    });
     eprintln!(
         "fly-server {} — substrate \"{}\": {} neurons, {} edges, threads={}, simd={}, admin=\"{}\", listening on {}:{}",
         fly_server::VERSION, substrate_id, substrate.n_neurons(), substrate.header.n_edges, cfg.n_threads, cfg.use_simd, admin_user, host, port
@@ -284,6 +289,7 @@ fn cmd_serve(args: &[String]) -> i32 {
         admin_dist,
         admin,
         datasets,
+        llm,
         &host,
     ) {
         Ok(()) => 0,

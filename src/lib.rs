@@ -3,6 +3,7 @@ pub mod api;
 pub mod datasets;
 pub mod engine;
 pub mod error;
+pub mod llm;
 pub mod session;
 pub mod slots;
 pub mod substrate;
