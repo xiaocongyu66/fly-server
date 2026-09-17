@@ -6,6 +6,7 @@ import { Sessions } from "@/pages/Sessions"
 import { Activity } from "@/pages/Activity"
 import { Keys } from "@/pages/Keys"
 import { Models } from "@/pages/Models"
+import { Query } from "@/pages/Query"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import {
@@ -15,10 +16,10 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
-import { Menu, LayoutDashboard, Boxes, Activity as ActivityIcon, KeyRound, Download, Languages } from "lucide-react"
+import { Menu, LayoutDashboard, Boxes, Activity as ActivityIcon, KeyRound, Download, Languages, Search } from "lucide-react"
 import { useI18n } from "@/i18n"
 
-type Page = "dashboard" | "sessions" | "activity" | "keys" | "models"
+type Page = "dashboard" | "sessions" | "activity" | "keys" | "models" | "query"
 
 const NAV: { key: Page; label: string; icon: typeof Menu }[] = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -26,6 +27,7 @@ const NAV: { key: Page; label: string; icon: typeof Menu }[] = [
   { key: "activity", label: "Live activity", icon: ActivityIcon },
   { key: "keys", label: "Keys & billing", icon: KeyRound },
   { key: "models", label: "Model downloads", icon: Download },
+  { key: "query", label: "Query", icon: Search },
 ]
 
 export default function App() {
@@ -67,6 +69,7 @@ export default function App() {
     activity: t("nav.activity"),
     keys: t("nav.keys"),
     models: t("nav.models"),
+    query: t("nav.query"),
   }
 
   function toggleLang() {
@@ -110,6 +113,7 @@ export default function App() {
     : page === "sessions" ? <Sessions />
     : page === "activity" ? <Activity />
     : page === "models" ? <Models />
+    : page === "query" ? <Query />
     : <Keys />
 
   return (

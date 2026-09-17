@@ -12,6 +12,7 @@ const EN: Dict = {
   "nav.activity": "Live activity",
   "nav.keys": "Keys & billing",
   "nav.models": "Model downloads",
+  "nav.query": "Query",
   "common.signout": "Sign out",
   "common.refresh": "Refresh",
   "common.language": "Language",
@@ -62,6 +63,7 @@ const EN: Dict = {
   "login.submit": "Sign in",
   "login.busy": "Signing in…",
   "login.default_hint": "default: admin / flyserver",
+  "query.match": "Match",
 }
 
 const ZH: Dict = {
@@ -70,6 +72,7 @@ const ZH: Dict = {
   "nav.activity": "实时活动",
   "nav.keys": "密钥与计费",
   "nav.models": "模型下载",
+  "nav.query": "查询",
   "common.signout": "退出登录",
   "common.refresh": "刷新",
   "common.language": "语言",
@@ -120,6 +123,7 @@ const ZH: Dict = {
   "login.submit": "登录",
   "login.busy": "登录中…",
   "login.default_hint": "默认：admin / flyserver",
+  "query.match": "匹配",
 }
 
 const DICTS: Record<Lang, Dict> = { en: EN, zh: ZH }
