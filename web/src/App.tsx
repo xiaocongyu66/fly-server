@@ -7,6 +7,7 @@ import { Activity } from "@/pages/Activity"
 import { Keys } from "@/pages/Keys"
 import { Models } from "@/pages/Models"
 import { Query } from "@/pages/Query"
+import { Brain3D } from "@/pages/Brain3D"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import {
@@ -16,10 +17,10 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
-import { Menu, LayoutDashboard, Boxes, Activity as ActivityIcon, KeyRound, Download, Languages, Search } from "lucide-react"
+import { Menu, LayoutDashboard, Boxes, Activity as ActivityIcon, KeyRound, Download, Languages, Search, Brain } from "lucide-react"
 import { useI18n } from "@/i18n"
 
-type Page = "dashboard" | "sessions" | "activity" | "keys" | "models" | "query"
+type Page = "dashboard" | "sessions" | "activity" | "keys" | "models" | "query" | "brain3d"
 
 const NAV: { key: Page; label: string; icon: typeof Menu }[] = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -28,6 +29,7 @@ const NAV: { key: Page; label: string; icon: typeof Menu }[] = [
   { key: "keys", label: "Keys & billing", icon: KeyRound },
   { key: "models", label: "Model downloads", icon: Download },
   { key: "query", label: "Query", icon: Search },
+  { key: "brain3d", label: "3D Brain", icon: Brain },
 ]
 
 export default function App() {
@@ -70,6 +72,7 @@ export default function App() {
     keys: t("nav.keys"),
     models: t("nav.models"),
     query: t("nav.query"),
+    brain3d: t("b3d.title"),
   }
 
   function toggleLang() {
@@ -114,6 +117,7 @@ export default function App() {
     : page === "activity" ? <Activity />
     : page === "models" ? <Models />
     : page === "query" ? <Query />
+    : page === "brain3d" ? <Brain3D />
     : <Keys />
 
   return (

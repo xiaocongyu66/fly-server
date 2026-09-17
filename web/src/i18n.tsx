@@ -63,7 +63,13 @@ const EN: Dict = {
   "login.submit": "Sign in",
   "login.busy": "Signing in…",
   "login.default_hint": "default: admin / flyserver",
-  "query.match": "Match",
+    "query.match": "Match",
+  "b3d.title": "3D Brain",
+  "b3d.subtitle": "Render neuron skeletons (SWC) in 3D via neu3d — data from neuPrint",
+  "b3d.render": "Render",
+  "b3d.hint": "Enter neuron body IDs from neuPrint, then Render. Configure neuPrint server/token/dataset below.",
+  "b3d.neuprint_badge": "neuPrint API",
+  "b3d.config_hint": "Settings (localStorage): neuprintServer=https://neuprint.janelia.org, neuprintToken=<your token>, neuprintDataset=<dataset name>",
 }
 
 const ZH: Dict = {
@@ -123,7 +129,13 @@ const ZH: Dict = {
   "login.submit": "登录",
   "login.busy": "登录中…",
   "login.default_hint": "默认：admin / flyserver",
-  "query.match": "匹配",
+    "query.match": "匹配",
+  "b3d.title": "3D 大脑",
+  "b3d.subtitle": "通过 neu3d 三维渲染神经元骨架（SWC）——数据来自 neuPrint",
+  "b3d.render": "渲染",
+  "b3d.hint": "输入 neuPrint 的神经元 body ID 后点击渲染。先在下方配置 neuPrint 服务器/令牌/数据集。",
+  "b3d.neuprint_badge": "neuPrint API",
+  "b3d.config_hint": "设置（localStorage）：neuprintServer=https://neuprint.janelia.org，neuprintToken=<令牌>，neuprintDataset=<数据集名>",
 }
 
 const DICTS: Record<Lang, Dict> = { en: EN, zh: ZH }
