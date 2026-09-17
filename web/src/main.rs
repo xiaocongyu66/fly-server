@@ -21,7 +21,13 @@ enum Route {
 }
 
 fn main() {
-    dioxus::launch(|| rsx! { Router::<Route> {} });
+    // client-only render: the registry crate pulls dioxus/fullstack which
+    // force-enables dioxus-web/hydrate via feature unification, and static
+    // hosting has no injected hydration data (atob(undefined) crash).
+    // hydrate(false) at runtime is the only working off-switch.
+    dioxus::LaunchBuilder::web()
+        .with_cfg(dioxus_web::Config::new().hydrate(false))
+        .launch(|| rsx! { Router::<Route> {} });
 }
 
 #[component]

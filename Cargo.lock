@@ -1312,10 +1312,12 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "dioxus-web",
- "gloo-net",
+ "js-sys",
  "registry",
  "serde",
  "serde_json",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
