@@ -44,10 +44,10 @@ export function Keys() {
     }
   }
 
-  async function disableKey(id: string) {
+  async function toggleKey(id: string, enable: boolean) {
     setErr("")
     try {
-      await api.post(`/v1/admin/keys/${id}/disable`, {})
+      await api.post(`/v1/admin/keys/${id}/${enable ? "enable" : "disable"}`, {})
       refresh()
     } catch (e: any) {
       setErr(e.message)
@@ -95,14 +95,23 @@ export function Keys() {
                   <TableCell>{String(r.usage?.ticks ?? 0)}</TableCell>
                   <TableCell>{String(r.usage?.sessions_created ?? 0)}</TableCell>
                   <TableCell>
-                    {enabled && (
+                    {enabled ? (
                       <Button
                         variant="ghost"
                         size="sm"
                         className="text-red-500 h-7 px-2"
-                        onClick={() => disableKey(id)}
+                        onClick={() => toggleKey(id, false)}
                       >
                         {t("keys.disable")}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-green-600 h-7 px-2"
+                        onClick={() => toggleKey(id, true)}
+                      >
+                        {t("keys.enable")}
                       </Button>
                     )}
                   </TableCell>
