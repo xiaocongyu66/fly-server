@@ -204,7 +204,8 @@ pub fn stream_to_file(
         if n == 0 {
             break;
         }
-        file.write_all(&buf[..n]).map_err(|e| format!("write: {e}"))?;
+        file.write_all(&buf[..n])
+            .map_err(|e| format!("write: {e}"))?;
         got += n as u64;
         on_progress(got);
     }

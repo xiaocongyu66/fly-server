@@ -394,7 +394,10 @@ mod tests {
         assert_eq!(r.status, 200);
 
         // unauthenticated: 401 (does not leak route existence)
-        assert_eq!(route(&mgr, &admin, &datasets, &req("GET", "/nope", "")).status, 401);
+        assert_eq!(
+            route(&mgr, &admin, &datasets, &req("GET", "/nope", "")).status,
+            401
+        );
         let r = authed("GET", "/nope", "");
         assert_eq!(r.status, 404);
     }
