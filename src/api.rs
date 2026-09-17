@@ -185,6 +185,20 @@ fn route_authed(
     match (req.method.as_str(), segs) {
         ("GET", ["v1", "models"]) => json_ok(mgr.models()),
 
+        ("POST", ["v1", "query"]) => match parse_body::<crate::types::NeuronSelector>(req) {
+            Ok(b) => json_ok(mgr.query(&b)),
+            Err(resp) => resp,
+        },
+        ("GET", ["v1", "substrate", "edges"]) => {
+            let limit = req
+                .query
+                .get("limit")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(2000)
+                .min(20000);
+            json_ok(mgr.sample_edges(limit))
+        }
+
         ("GET", ["v1", "sessions"]) => json_ok(mgr.list()),
         ("POST", ["v1", "sessions"]) => {
             admin.record_usage(key_id.as_deref(), 0, 0, 1);

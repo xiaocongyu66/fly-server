@@ -16,13 +16,22 @@ import {
   TableRow,
 } from "@/components/ui/table"
 
+type Neuron = {
+  idx: number
+  root_id: number
+  region: string
+  cell_type: string
+  nt_type: string
+}
+
 export function Query() {
   const { t } = useI18n()
   const [q, setQ] = useState("")
   const [mode, setMode] = useState<"rule" | "llm">("rule")
   const [knownRegions, setKnownRegions] = useState<string[]>([])
   const [result, setResult] = useState<ParseResult | null>(null)
-  const [rows, setRows] = useState<any[]>([])
+  const [count, setCount] = useState<number | null>(null)
+  const [rows, setRows] = useState<Neuron[]>([])
   const [err, setErr] = useState("")
   const [busy, setBusy] = useState(false)
 
@@ -40,40 +49,28 @@ export function Query() {
     setBusy(true)
     setResult(null)
     setRows([])
+    setCount(null)
     try {
-      const regions = knownRegions
       const parsed =
         mode === "llm"
           ? await llmParseQuery(
               q,
-              regions,
+              knownRegions,
               getSettings().llmEndpoint,
               getSettings().llmKey,
               getSettings().llmModel || "gpt-4o-mini"
             )
-          : parseQuery(q, regions)
+          : parseQuery(q, knownRegions)
       setResult(parsed)
 
-      // resolve matched neurons via a session observe (selector semantics)
-      const target: any = { region: parsed.region ?? null, cell_type: parsed.cell_type ?? null, nt_type: parsed.nt_type ?? null, limit: parsed.limit ?? 50 }
-      if (parsed.region) {
-        // create a throwaway session and observe to fetch matching neurons
-        const s = await api.post("/v1/sessions", {})
-        const sid = s.id
-        const item = await api.post(`/v1/sessions/${sid}/observe`, {
-          modality: "query",
-          target: { region: parsed.region, limit: parsed.limit ?? 50 },
-          current: 0.0001,
-          duration_ticks: 1,
-        })
-        const n = item?.body?.n_neurons_stimulated ?? 0
-        setRows([{ id: `${n} neurons matched in ${parsed.region}`, info: `nt=${parsed.nt_type ?? "any"}`, tick: n }])
-        await api.del(`/v1/sessions/${sid}`)
-      } else if (parsed.nt_type || parsed.cell_type) {
-        setRows([{ id: `selector ready (nt=${parsed.nt_type ?? "?"}, ct=${parsed.cell_type ?? "?"})`, info: "configure region in query for live match", tick: 0 }])
-      } else {
-        setRows([{ id: "no structural filter found — try mentioning a region or neurotransmitter", info: "", tick: 0 }])
-      }
+      const v = await api.post("/v1/query", {
+        region: parsed.region ?? undefined,
+        cell_type: parsed.cell_type ?? undefined,
+        nt_type: parsed.nt_type ?? undefined,
+        limit: Math.min(parsed.limit ?? 25, 200),
+      })
+      setCount(v.count ?? 0)
+      setRows(v.neurons ?? [])
     } catch (e: any) {
       setErr(e.message)
     }
@@ -82,11 +79,11 @@ export function Query() {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Query</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">{t("query.title")}</h1>
       <div className="flex flex-wrap gap-2 items-center">
         <Input
           className="w-full md:w-96"
-          placeholder={'e.g. "GABAergic visual neurons, first 20" / “ME 区的 GABA 能神经元”'}
+          placeholder={'e.g. "GABAergic visual neurons, first 20" / “ME 区的 GABA 神经元”'}
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && run()}
@@ -98,15 +95,18 @@ export function Query() {
           </TabsList>
         </Tabs>
         <Button onClick={run} disabled={busy}>
-          {busy ? "…" : "Run"}
+          {busy ? "…" : t("query.run")}
         </Button>
       </div>
       {err && <div className="text-sm text-red-500">{err}</div>}
       {result && (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 items-center">
           {result.tokens.map((tk) => (
             <Badge key={tk} variant="secondary">{tk}</Badge>
           ))}
+          {count !== null && (
+            <Badge variant="outline">{t("query.total_matched")}: {count}</Badge>
+          )}
         </div>
       )}
       {rows.length > 0 && (
@@ -114,17 +114,19 @@ export function Query() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>{t("query.match")}</TableHead>
-                <TableHead>detail</TableHead>
-                <TableHead>tick</TableHead>
+                <TableHead>{t("query.root_id")}</TableHead>
+                <TableHead>{t("query.region")}</TableHead>
+                <TableHead>{t("query.nt")}</TableHead>
+                <TableHead>{t("query.cell_type")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((r, i) => (
-                <TableRow key={i}>
-                  <TableCell className="font-mono text-xs">{String(r.id)}</TableCell>
-                  <TableCell>{String(r.info ?? "")}</TableCell>
-                  <TableCell>{String(r.tick ?? "")}</TableCell>
+              {rows.map((n) => (
+                <TableRow key={n.idx}>
+                  <TableCell className="font-mono text-xs">{n.root_id}</TableCell>
+                  <TableCell>{n.region}</TableCell>
+                  <TableCell>{n.nt_type}</TableCell>
+                  <TableCell className="max-w-40 truncate">{n.cell_type}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

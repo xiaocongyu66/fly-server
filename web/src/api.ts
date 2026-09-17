@@ -29,7 +29,10 @@ async function send(method: string, path: string, body?: string): Promise<any> {
   }
   if (resp.status >= 400) {
     const msg = v?.error?.message ?? text
-    if (resp.status === 401) clearToken()
+    if (resp.status === 401) {
+      clearToken()
+      window.location.reload() // global: any 401 kicks back to login
+    }
     throw new Error(`[${resp.status}] ${msg}`)
   }
   return v

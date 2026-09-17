@@ -1,107 +1,150 @@
-//! 3D brain visualization via neu3d (UMD bundle loaded from unpkg CDN,
-//! exposes window.Neu3D). Falls back gracefully when offline.
+//! Local 3D connectome viewer: renders neurons + real wiring from the
+//! local substrate using three.js. No external services.
 
 import { useEffect, useRef, useState } from "react"
+import * as THREE from "three"
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js"
+import * as api from "@/api"
 import { useI18n } from "@/i18n"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { getSettings, saveSettings } from "@/settings"
 
-declare global {
-  interface Window {
-    Neu3D?: any
+type Neuron = { idx: number; root_id: number; region: string; nt_type: string }
+
+function fnv(s: string): number {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
   }
+  return h >>> 0
 }
 
-const NEU3D_CDN = "https://unpkg.com/neu3d/lib/neu3d.min.js"
-
-type Fetched = { bodyId: number; swc: string } | null
-
-async function loadNeu3D(): Promise<any> {
-  if (window.Neu3D) return window.Neu3D
-  await new Promise<void>((resolve, reject) => {
-    const el = document.createElement("script")
-    el.src = NEU3D_CDN
-    el.onload = () => resolve()
-    el.onerror = () => reject(new Error("failed to load neu3d from CDN"))
-    document.head.appendChild(el)
-  })
-  if (!window.Neu3D) throw new Error("neu3d loaded but window.Neu3D missing")
-  return window.Neu3D
-}
-
-async function fetchSkeleton(bodyId: number): Promise<string> {
-  const s = getSettings()
-  const server = s.neuprintServer.replace(/\/$/, "")
-  const dataset = s.neuprintDataset
-  if (!s.neuprintToken || !dataset) throw new Error("neuPrint token/dataset not configured")
-  const resp = await fetch(`${server}/api/neo4j/skeletons/${bodyId}`, {
-    headers: { Authorization: `Bearer ${s.neuprintToken}`, "Content-Type": "application/json" },
-  })
-  if (!resp.ok) throw new Error(`[${resp.status}] skeleton fetch failed`)
-  return resp.text()
+// deterministic region-cluster layout on a sphere
+function regionCenter(name: string, regionList: string[], R: number): THREE.Vector3 {
+  const idx = Math.max(0, regionList.indexOf(name))
+  const golden = Math.PI * (3 - Math.sqrt(5))
+  const y = 1 - ((idx + 0.5) / Math.max(1, regionList.length)) * 2
+  const r = Math.sqrt(Math.max(0, 1 - y * y))
+  const theta = golden * idx
+  return new THREE.Vector3(Math.cos(theta) * r * R, y * R, Math.sin(theta) * r * R)
 }
 
 export function Brain3D() {
   const { t } = useI18n()
   const holderRef = useRef<HTMLDivElement | null>(null)
+  const cleanupRef = useRef<(() => void) | null>(null)
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle")
   const [errMsg, setErrMsg] = useState("")
-  const [bodyIds, setBodyIds] = useState("")
-  const [token, setTokenState] = useState(getSettings().neuprintToken)
-  const [dataset, setDatasetState] = useState(getSettings().neuprintDataset)
-  const [server, setServerState] = useState(getSettings().neuprintServer)
+  const [stats, setStats] = useState({ nodes: 0, edges: 0 })
+
+  useEffect(() => () => cleanupRef.current?.(), [])
 
   async function render() {
     setStatus("loading")
     setErrMsg("")
     try {
-      const Neu3D = await loadNeu3D()
-      // parse body ids (comma/space separated)
-      const ids = bodyIds
-        .split(/[,\s]+/)
-        .map((x) => Number(x))
-        .filter((x) => Number.isFinite(x) && x > 0)
-        .slice(0, 12)
-      if (!ids.length) throw new Error("enter at least one neuron body id")
+      const [nodesResp, edgesResp] = await Promise.all([
+        api.post("/v1/query", { limit: 400 }),
+        api.get("/v1/substrate/edges?limit=3000"),
+      ])
+      const neurons: Neuron[] = nodesResp.neurons ?? []
+      const rawEdges: [number, number][] = edgesResp.edges ?? []
+      if (!neurons.length) throw new Error("no neurons returned")
 
-      const fetched = await Promise.all(
-        ids.map(async (id): Promise<Fetched> => {
-          try {
-            const swc = await fetchSkeleton(id)
-            return { bodyId: id, swc }
-          } catch {
-            return null
-          }
-        })
-      )
-      const ok = fetched.filter((x): x is { bodyId: number; swc: string } => x !== null)
-      if (!ok.length) throw new Error("no skeletons fetched (check token/dataset)")
+      // collect distinct regions from neurons
+      const regions = [...new Set(neurons.map((n) => n.region).filter(Boolean))].sort()
+      const R = 90
+      const posById = new Map<number, THREE.Vector3>()
+      for (const n of neurons) {
+        const c = regionCenter(n.region || "unassigned", regions, R)
+        const h = fnv(String(n.root_id))
+        const jitter = new THREE.Vector3(
+          ((h & 0xff) / 255 - 0.5) * 14,
+          (((h >> 8) & 0xff) / 255 - 0.5) * 14,
+          (((h >> 16) & 0xff) / 255 - 0.5) * 14
+        )
+        posById.set(n.root_id, c.clone().add(jitter))
+      }
 
-      // build neu3d-style JSON data: one SWC entry per neuron
-      const data: any = {}
-      for (const f of ok) {
-        data[String(f.bodyId)] = { type: "swc", swc: f.swc, color: undefined }
+      // edges restricted to rendered nodes
+      const lines: number[] = []
+      for (const [pre, post] of rawEdges) {
+        const a = posById.get(pre)
+        const b = posById.get(post)
+        if (a && b) {
+          lines.push(a.x, a.y, a.z, b.x, b.y, b.z)
+        }
       }
-      if (holderRef.current) {
-        holderRef.current.innerHTML = ""
-        const div = document.createElement("div")
-        div.className = "vis-3d"
-        div.style.width = "100%"
-        div.style.height = "100%"
-        holderRef.current.appendChild(div)
-        // neu3d constructor: (el, data, config)
-        const inst = new Neu3D(div, data, {
-          hasLocalData: false,
-          hasExternalData: false,
-          backgroundColor: 0x000000,
-          db: { name: "fly-admin", ip: "", port: 0 },
+
+      // --- three.js scene ---
+      const holder = holderRef.current
+      if (!holder) throw new Error("holder missing")
+      holder.innerHTML = ""
+      const width = holder.clientWidth
+      const height = holder.clientHeight
+      const scene = new THREE.Scene()
+      scene.background = new THREE.Color(0x0a0a0a)
+      const camera = new THREE.PerspectiveCamera(55, width / height, 0.1, 3000)
+      camera.position.set(0, 60, 240)
+      const renderer = new THREE.WebGLRenderer({ antialias: true })
+      renderer.setSize(width, height)
+      holder.appendChild(renderer.domElement)
+      const controls = new OrbitControls(camera, renderer.domElement)
+      controls.enableDamping = true
+
+      // nodes: one mesh per neuron (400 is cheap), colored by region hue
+      const regionHue = new Map<string, number>()
+      regions.forEach((r, i) => regionHue.set(r, (i * 0.618) % 1))
+      const sphereGeo = new THREE.SphereGeometry(1.6, 12, 12)
+      for (const n of neurons) {
+        const p = posById.get(n.root_id)!
+        const hue = regionHue.get(n.region || "unassigned") ?? 0.5
+        const mat = new THREE.MeshBasicMaterial({
+          color: new THREE.Color().setHSL(hue, 0.7, 0.6),
         })
-        inst.addJSONData(data)
-        inst.init()
-        inst.render()
+        const mesh = new THREE.Mesh(sphereGeo, mat)
+        mesh.position.copy(p)
+        scene.add(mesh)
       }
+
+      // edges
+      if (lines.length) {
+        const lineGeo = new THREE.BufferGeometry()
+        lineGeo.setAttribute("position", new THREE.Float32BufferAttribute(lines, 3))
+        const lineMat = new THREE.LineBasicMaterial({
+          color: 0x4a6fa5,
+          transparent: true,
+          opacity: 0.14,
+        })
+        scene.add(new THREE.LineSegments(lineGeo, lineMat))
+      }
+
+      // animation
+      let raf = 0
+      const tick = () => {
+        controls.update()
+        renderer.render(scene, camera)
+        raf = requestAnimationFrame(tick)
+      }
+      tick()
+      const onResize = () => {
+        const w = holder.clientWidth
+        const h = holder.clientHeight
+        camera.aspect = w / h
+        camera.updateProjectionMatrix()
+        renderer.setSize(w, h)
+      }
+      window.addEventListener("resize", onResize)
+      cleanupRef.current = () => {
+        cancelAnimationFrame(raf)
+        window.removeEventListener("resize", onResize)
+        controls.dispose()
+        renderer.dispose()
+        holder.innerHTML = ""
+      }
+
+      setStats({ nodes: neurons.length, edges: lines.length / 6 })
       setStatus("ready")
     } catch (e: any) {
       setErrMsg(e.message ?? String(e))
@@ -114,57 +157,27 @@ export function Brain3D() {
       <h1 className="text-2xl font-semibold tracking-tight">{t("b3d.title")}</h1>
       <p className="text-sm text-muted-foreground">{t("b3d.subtitle")}</p>
       <div className="flex flex-wrap gap-2 items-center">
-        <Input
-          className="w-full md:w-96 font-mono"
-          placeholder="body ids: 720575940614909339, 720575940621675443"
-          value={bodyIds}
-          onChange={(e) => setBodyIds(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && render()}
-        />
         <Button onClick={render} disabled={status === "loading"}>
           {status === "loading" ? "…" : t("b3d.render")}
         </Button>
+        {status === "ready" && (
+          <Badge variant="outline">
+            {t("b3d.nodes")}: {stats.nodes} · {t("b3d.edges")}: {stats.edges}
+          </Badge>
+        )}
       </div>
       {status === "error" && <div className="text-sm text-red-500">{errMsg}</div>}
       <div
         ref={holderRef}
-        className="w-full h-[420px] md:h-[560px] rounded-lg border bg-black overflow-hidden relative"
+        className="w-full h-[420px] md:h-[560px] rounded-lg border bg-black overflow-hidden"
       >
         {status === "idle" && (
-          <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
+          <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
             {t("b3d.hint")}
           </div>
         )}
       </div>
-      <div className="flex flex-wrap gap-2 text-xs">
-        <Badge variant="secondary">neu3d (fruitflybrain)</Badge>
-        <Badge variant="secondary">{t("b3d.neuprint_badge")}</Badge>
-      </div>
-      <details className="text-xs">
-        <summary className="cursor-pointer text-muted-foreground">{t("b3d.config_hint")}</summary>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2">
-          <div>
-            <label className="text-muted-foreground">neuPrint server</label>
-            <Input value={server} onChange={(e) => setServerState(e.target.value)} />
-          </div>
-          <div>
-            <label className="text-muted-foreground">token</label>
-            <Input type="password" value={token} onChange={(e) => setTokenState(e.target.value)} />
-          </div>
-          <div>
-            <label className="text-muted-foreground">dataset</label>
-            <Input value={dataset} onChange={(e) => setDatasetState(e.target.value)} placeholder="flywire:F" />
-          </div>
-        </div>
-        <Button
-          size="sm"
-          variant="outline"
-          className="mt-2"
-          onClick={() => saveSettings({ neuprintServer: server, neuprintToken: token, neuprintDataset: dataset })}
-        >
-          Save settings
-        </Button>
-      </details>
+      <p className="text-xs text-muted-foreground">{t("b3d.local_badge")}</p>
     </div>
   )
 }

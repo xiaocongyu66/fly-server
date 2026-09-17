@@ -10,6 +10,18 @@ pub mod flywire;
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::types::NeuronSelector;
+
+/// A neuron matched by a selector query, with resolved metadata.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SelectedNeuron {
+    pub idx: u32,
+    pub root_id: u64,
+    pub region: String,
+    pub cell_type: String,
+    pub nt_type: String,
+}
+
 pub use flybin::{FlybinHeader, StringTables, Substrate, Weights};
 
 #[derive(Debug, Default, serde::Serialize)]
@@ -208,4 +220,110 @@ pub fn compile_flywire(
 /// Load a compiled substrate from disk.
 pub fn load(path: &Path) -> std::io::Result<Substrate> {
     flybin::read_flybin(path)
+}
+
+impl Substrate {
+    /// Resolve a selector against this substrate; returns matched neuron
+    /// indices (unbounded — caller applies its own limit).
+    pub fn select(&self, sel: &NeuronSelector) -> Vec<u32> {
+        let n = self.n_neurons();
+        let mut matched: Vec<u32> = Vec::new();
+        if !sel.ids.is_empty() {
+            let map: HashMap<u64, u32> = self
+                .root_ids
+                .iter()
+                .enumerate()
+                .map(|(i, &r)| (r, i as u32))
+                .collect();
+            for &root in &sel.ids {
+                if let Some(&i) = map.get(&root) {
+                    matched.push(i);
+                }
+            }
+            return matched;
+        }
+        let region_idx = sel.region.as_ref().and_then(|r| {
+            self.header
+                .string_tables
+                .regions
+                .iter()
+                .position(|t| t.eq_ignore_ascii_case(r))
+        });
+        let ct_idx = sel.cell_type.as_ref().and_then(|c| {
+            self.header
+                .string_tables
+                .cell_types
+                .iter()
+                .position(|t| t.eq_ignore_ascii_case(c))
+        });
+        let nt_idx = sel.nt_type.as_ref().and_then(|t| {
+            self.header
+                .string_tables
+                .nt_types
+                .iter()
+                .position(|x| x.eq_ignore_ascii_case(t))
+        });
+        if region_idx.is_some() || ct_idx.is_some() || nt_idx.is_some() {
+            for i in 0..n {
+                if let Some(ri) = region_idx {
+                    if self.region[i] as usize != ri {
+                        continue;
+                    }
+                }
+                if let Some(ci) = ct_idx {
+                    if self.cell_type[i] as usize != ci {
+                        continue;
+                    }
+                }
+                if let Some(ni) = nt_idx {
+                    if self.nt_type[i] as usize != ni {
+                        continue;
+                    }
+                }
+                matched.push(i as u32);
+            }
+        }
+        matched
+    }
+
+    pub fn selected_details(&self, idxs: &[u32]) -> Vec<SelectedNeuron> {
+        let regions = &self.header.string_tables.regions;
+        let cts = &self.header.string_tables.cell_types;
+        let nts = &self.header.string_tables.nt_types;
+        idxs.iter()
+            .map(|&i| {
+                let i = i as usize;
+                SelectedNeuron {
+                    idx: i as u32,
+                    root_id: self.root_ids[i],
+                    region: regions[self.region[i] as usize].clone(),
+                    cell_type: cts[self.cell_type[i] as usize].clone(),
+                    nt_type: nts[self.nt_type[i] as usize].clone(),
+                }
+            })
+            .collect()
+    }
+
+    /// Deterministically sample `limit` edges from the CSR connectivity.
+    pub fn sample_edges(&self, limit: usize) -> Vec<(u64, u64)> {
+        let total = self.indices.len();
+        if total == 0 || limit == 0 {
+            return Vec::new();
+        }
+        let stride = (total / limit).max(1);
+        let mut out = Vec::with_capacity(limit);
+        let mut pos = 0usize;
+        'rows: for row in 0..self.n_neurons() {
+            for e in self.edges(row) {
+                if pos.is_multiple_of(stride) {
+                    out.push((self.root_ids[row], self.root_ids[self.indices[e] as usize]));
+                    if out.len() >= limit {
+                        break 'rows;
+                    }
+                }
+                pos += 1;
+            }
+        }
+        out
+    }
 }

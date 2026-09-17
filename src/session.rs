@@ -84,6 +84,21 @@ impl SessionManager {
     }
 
     /// Session summaries for the admin UI list view.
+    /// Resolve a selector directly against the substrate (no session).
+    pub fn query(&self, sel: &crate::types::NeuronSelector) -> serde_json::Value {
+        let matched = self.substrate.select(sel);
+        let count = matched.len() as u64;
+        let limit = (sel.limit.unwrap_or(25).min(1000) as usize).min(matched.len());
+        let neurons = self.substrate.selected_details(&matched[..limit]);
+        serde_json::json!({"count": count, "returned": neurons.len(), "neurons": neurons})
+    }
+
+    /// Deterministically sample edges from the local connectome.
+    pub fn sample_edges(&self, limit: usize) -> serde_json::Value {
+        let edges = self.substrate.sample_edges(limit);
+        serde_json::json!({"count": edges.len(), "edges": edges})
+    }
+
     pub fn list(&self) -> Vec<SessionObject> {
         self.sessions
             .lock()
