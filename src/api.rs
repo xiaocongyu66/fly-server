@@ -24,6 +24,7 @@ struct LoginRequest {
     password: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_server(
     substrate: Arc<Substrate>,
     substrate_id: String,

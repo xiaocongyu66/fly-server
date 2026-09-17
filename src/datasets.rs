@@ -2,7 +2,7 @@
 //!
 //! Tiers:
 //! - lite:     FlyWire v783 Princeton CSV.gz dump (whole female brain) —
-//!             downloads and compiles end-to-end with the built-in CSV pipeline.
+//!     downloads and compiles end-to-end with the built-in CSV pipeline.
 //! - standard: MaleCNS v1.0 connectome-weights feather (neuron-to-neuron).
 //! - full:     MaleCNS v1.0 syn-partners feather (synapse-level partners).
 //!
@@ -128,8 +128,7 @@ impl DatasetStore {
         let def = DATASETS
             .iter()
             .find(|d| d.tier == tier)
-            .ok_or("unknown tier")?
-            .clone();
+            .ok_or("unknown tier")?;
         let store = Arc::clone(self);
         let tier_s = tier.to_string();
 
