@@ -12,3 +12,4 @@ web/public/
 admin_keys.json
 fly-server
 fly-server-aarch64
+admin-dist/
