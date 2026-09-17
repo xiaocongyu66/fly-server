@@ -1,7 +1,9 @@
 import { useState } from "react"
 import * as api from "@/api"
+import { useI18n } from "@/i18n"
 
 export function Login({ onDone }: { onDone: () => void }) {
+  const { t } = useI18n()
   const [username, setUsername] = useState("admin")
   const [password, setPassword] = useState("")
   const [err, setErr] = useState("")
@@ -45,9 +47,9 @@ export function Login({ onDone }: { onDone: () => void }) {
           disabled={busy}
           onClick={submit}
         >
-          {busy ? "Signing in…" : "Sign in"}
+          {busy ? t("login.busy") : t("login.submit")}
         </button>
-        <p className="mt-3 text-[10px] text-muted-foreground">default: admin / flyserver</p>
+        <p className="mt-3 text-[10px] text-muted-foreground">{t("login.default_hint")}</p>
       </div>
     </div>
   )

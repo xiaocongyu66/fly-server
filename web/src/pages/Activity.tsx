@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from "react"
 import { token } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { useI18n } from "@/i18n"
 
 type EventSourceLike = { close: () => void }
 
 export function Activity() {
+  const { t } = useI18n()
   const [sessionId, setSessionId] = useState("")
   const [connected, setConnected] = useState(false)
   const [bars, setBars] = useState<number[]>([])
@@ -48,7 +50,7 @@ export function Activity() {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Live activity</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">{t("act.title")}</h1>
       <div className="flex flex-wrap gap-2 items-center">
         <Input
           className="w-full sm:w-72 font-mono"
@@ -56,11 +58,11 @@ export function Activity() {
           value={sessionId}
           onChange={(e) => setSessionId(e.target.value)}
         />
-        <Button onClick={connect}>Connect</Button>
+        <Button onClick={connect}>{t("act.connect")}</Button>
         {connected && (
-          <Button variant="outline" onClick={disconnect}>Disconnect</Button>
+          <Button variant="outline" onClick={disconnect}>{t("act.disconnect")}</Button>
         )}
-        <div className="text-sm text-muted-foreground">total spikes: {total}</div>
+        <div className="text-sm text-muted-foreground">{t("act.total")}: {total}</div>
       </div>
       <div className="flex items-end gap-[2px] h-40 rounded-lg border p-2 bg-muted/30 overflow-x-auto">
         {bars.map((b, i) => {
@@ -75,9 +77,7 @@ export function Activity() {
           )
         })}
       </div>
-      <p className="text-xs text-muted-foreground">
-        run observe/step from the Sessions page while watching this
-      </p>
+      <p className="text-xs text-muted-foreground">{t("act.hint")}</p>
     </div>
   )
 }

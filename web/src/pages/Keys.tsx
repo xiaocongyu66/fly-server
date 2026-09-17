@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 import * as api from "@/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { useI18n } from "@/i18n"
 import {
   Table,
   TableBody,
@@ -12,6 +13,7 @@ import {
 } from "@/components/ui/table"
 
 export function Keys() {
+  const { t } = useI18n()
   const [rows, setRows] = useState<any[]>([])
   const [name, setName] = useState("default")
   const [newSecret, setNewSecret] = useState("")
@@ -54,16 +56,16 @@ export function Keys() {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">API keys & billing</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">{t("keys.title")}</h1>
       {err && <div className="text-sm text-red-500">{err}</div>}
       <div className="flex flex-wrap gap-2 items-center">
         <Input className="w-40" value={name} onChange={(e) => setName(e.target.value)} />
-        <Button onClick={createKey}>+ Create key</Button>
-        <Button variant="outline" onClick={refresh}>Refresh</Button>
+        <Button onClick={createKey}>{t("keys.create")}</Button>
+        <Button variant="outline" onClick={refresh}>{t("common.refresh")}</Button>
       </div>
       {newSecret && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs">
-          <span className="font-semibold">Copy the secret now — shown once: </span>
+          <span className="font-semibold">{t("keys.copy_now")} </span>
           <code className="font-mono break-all">{newSecret}</code>
         </div>
       )}
@@ -71,9 +73,9 @@ export function Keys() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>id</TableHead>
-              <TableHead>name</TableHead>
-              <TableHead>enabled</TableHead>
+              <TableHead>{t("keys.id")}</TableHead>
+              <TableHead>{t("keys.name")}</TableHead>
+              <TableHead>{t("keys.enabled")}</TableHead>
               <TableHead>requests</TableHead>
               <TableHead>ticks</TableHead>
               <TableHead>sessions</TableHead>
@@ -100,7 +102,7 @@ export function Keys() {
                         className="text-red-500 h-7 px-2"
                         onClick={() => disableKey(id)}
                       >
-                        disable
+                        {t("keys.disable")}
                       </Button>
                     )}
                   </TableCell>

@@ -1,0 +1,116 @@
+import * as api from "@/api"
+import { useI18n } from "@/i18n"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useCallback, useEffect, useState } from "react"
+
+type Tier = {
+  tier: string
+  status: string // "idle" | "downloading" | "downloaded" | "compiled" | "error"
+  downloaded: number
+  total: number
+  error?: string | null
+  hint?: string | null
+}
+
+export function Models() {
+  const { t } = useI18n()
+  const [tiers, setTiers] = useState<Tier[]>([])
+  const [err, setErr] = useState("")
+  const [polling, setPolling] = useState(false)
+
+  const refresh = useCallback(async () => {
+    try {
+      const v = await api.get("/v1/admin/datasets/status")
+      const list: Tier[] = v.tiers ?? []
+      setTiers(list)
+      const anyDownloading = list.some((x) => x.status === "downloading")
+      setPolling(anyDownloading)
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }, [])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  // poll while any tier is downloading
+  useEffect(() => {
+    if (!polling) return
+    const h = setInterval(refresh, 2000)
+    return () => clearInterval(h)
+  }, [polling, refresh])
+
+  async function download(tier: string) {
+    setErr("")
+    try {
+      await api.post(`/v1/admin/datasets/${tier}/download`, {})
+      setPolling(true)
+      refresh()
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+
+  function statusKey(s: string) {
+    return `models.status.${s}`
+  }
+
+  return (
+    <div className="p-4 md:p-6 space-y-4">
+      <h1 className="text-2xl font-semibold tracking-tight">{t("models.title")}</h1>
+      {err && <div className="text-sm text-red-500">{err}</div>}
+      <p className="text-sm text-muted-foreground">{t("models.subtitle")}</p>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {tiers.map((tier) => {
+          const pct =
+            tier.total > 0 ? Math.min(100, Math.round((tier.downloaded / tier.total) * 100)) : 0
+          const busy = tier.status === "downloading"
+          return (
+            <Card key={tier.tier}>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  <span className="uppercase tracking-wide">{tier.tier}</span>
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {t(statusKey(tier.status))}
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <div className="text-xs text-muted-foreground">
+                  {tier.downloaded > 0
+                    ? `${(tier.downloaded / 1e9).toFixed(2)} GB / ${(
+                        tier.total / 1e9
+                      ).toFixed(2)} GB`
+                    : `${(tier.total / 1e9).toFixed(2)} GB`}
+                </div>
+                {busy && (
+                  <div className="h-2 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full bg-primary transition-all"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                )}
+                {tier.hint && (
+                  <div className="text-[10px] text-muted-foreground">{tier.hint}</div>
+                )}
+                {tier.error && (
+                  <div className="text-[10px] text-red-500">{tier.error}</div>
+                )}
+                <Button
+                  size="sm"
+                  disabled={busy || tier.status === "compiled"}
+                  onClick={() => download(tier.tier)}
+                >
+                  {busy ? t("models.in_flight") : t("models.download")}
+                </Button>
+              </CardContent>
+            </Card>
+          )
+        })}
+      </div>
+    </div>
+  )
+}

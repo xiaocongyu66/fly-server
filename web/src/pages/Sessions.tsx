@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { useI18n } from "@/i18n"
 import {
   Table,
   TableBody,
@@ -19,6 +20,7 @@ import {
 } from "@/components/ui/table"
 
 export function Sessions() {
+  const { t } = useI18n()
   const [rows, setRows] = useState<any[]>([])
   const [regions, setRegions] = useState<string[]>([])
   const [selected, setSelected] = useState("")
@@ -71,7 +73,7 @@ export function Sessions() {
     setErr("")
     setLastResult("")
     if (!selected) {
-      setErr("select a session first (click a row id)")
+      setErr(t("sess.select_first"))
       return
     }
     try {
@@ -94,11 +96,11 @@ export function Sessions() {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Sessions</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">{t("sess.title")}</h1>
       {err && <div className="text-sm text-red-500">{err}</div>}
       <div className="flex flex-wrap gap-2">
-        <Button onClick={createSession}>+ New session</Button>
-        <Button variant="outline" onClick={refresh}>Refresh</Button>
+        <Button onClick={createSession}>{t("sess.new")}</Button>
+        <Button variant="outline" onClick={refresh}>{t("common.refresh")}</Button>
       </div>
       <div className="rounded-lg border overflow-x-auto">
         <Table>
@@ -142,12 +144,12 @@ export function Sessions() {
         </Table>
       </div>
 
-      <h2 className="text-lg font-semibold pt-2">Stimulator</h2>
-      <p className="text-xs text-muted-foreground">selected: {selected || "none"}</p>
+      <h2 className="text-lg font-semibold pt-2">{t("sess.stimulator")}</h2>
+      <p className="text-xs text-muted-foreground">{selected ? t("sess.selected") + ": " + selected : t("sess.selected_none")}</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
         <Select value={region} onValueChange={(v) => setRegion(v ?? "")}>
           <SelectTrigger>
-            <SelectValue placeholder="— region —" />
+            <SelectValue placeholder={t("sess.region")} />
           </SelectTrigger>
           <SelectContent>
             {regions.map((r) => (
@@ -156,14 +158,14 @@ export function Sessions() {
           </SelectContent>
         </Select>
         <div>
-          <label className="text-xs text-muted-foreground">current</label>
+          <label className="text-xs text-muted-foreground">{t("sess.current")}</label>
           <Input value={current} onChange={(e) => setCurrent(e.target.value)} />
         </div>
         <div>
-          <label className="text-xs text-muted-foreground">steps</label>
+          <label className="text-xs text-muted-foreground">{t("sess.steps")}</label>
           <Input value={steps} onChange={(e) => setSteps(e.target.value)} />
         </div>
-        <Button onClick={injectAndStep}>Inject + step</Button>
+        <Button onClick={injectAndStep}>{t("sess.inject")}</Button>
       </div>
       {lastResult && (
         <div className="text-sm text-green-600 font-mono">{lastResult}</div>

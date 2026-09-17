@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import * as api from "@/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useI18n } from "@/i18n"
 
 function Stat({ title, value }: { title: string; value: string }) {
   return (
@@ -16,6 +17,7 @@ function Stat({ title, value }: { title: string; value: string }) {
 }
 
 export function Dashboard() {
+  const { t } = useI18n()
   const [substrate, setSubstrate] = useState("…")
   const [neurons, setNeurons] = useState("—")
   const [edges, setEdges] = useState("—")
@@ -49,15 +51,15 @@ export function Dashboard() {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">{t("dash.title")}</h1>
       {err && <div className="text-sm text-red-500">{err}</div>}
-      <p className="text-sm text-muted-foreground">substrate: {substrate}</p>
+      <p className="text-sm text-muted-foreground">{t("dash.substrate")}: {substrate}</p>
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <Stat title="Neurons" value={neurons} />
-        <Stat title="Synapses" value={edges} />
-        <Stat title="Sessions" value={sessions} />
-        <Stat title="Billed ticks" value={ticks} />
-        <Stat title="API requests" value={requests} />
+        <Stat title={t("dash.neurons")} value={neurons} />
+        <Stat title={t("dash.synapses")} value={edges} />
+        <Stat title={t("dash.sessions")} value={sessions} />
+        <Stat title={t("dash.ticks")} value={ticks} />
+        <Stat title={t("dash.requests")} value={requests} />
       </div>
     </div>
   )

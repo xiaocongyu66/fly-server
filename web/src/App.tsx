@@ -5,6 +5,7 @@ import { Dashboard } from "@/pages/Dashboard"
 import { Sessions } from "@/pages/Sessions"
 import { Activity } from "@/pages/Activity"
 import { Keys } from "@/pages/Keys"
+import { Models } from "@/pages/Models"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import {
@@ -14,23 +15,47 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
-import { Menu, LayoutDashboard, Boxes, Activity as ActivityIcon, KeyRound } from "lucide-react"
+import { Menu, LayoutDashboard, Boxes, Activity as ActivityIcon, KeyRound, Download, Languages } from "lucide-react"
+import { useI18n } from "@/i18n"
 
-type Page = "dashboard" | "sessions" | "activity" | "keys"
+type Page = "dashboard" | "sessions" | "activity" | "keys" | "models"
 
 const NAV: { key: Page; label: string; icon: typeof Menu }[] = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { key: "sessions", label: "Sessions", icon: Boxes },
   { key: "activity", label: "Live activity", icon: ActivityIcon },
   { key: "keys", label: "Keys & billing", icon: KeyRound },
+  { key: "models", label: "Model downloads", icon: Download },
 ]
 
 export default function App() {
+  const { lang, setLang, t } = useI18n()
   const [authed, setAuthed] = useState(!!token())
   const [page, setPage] = useState<Page>("dashboard")
   const [sheetOpen, setSheetOpen] = useState(false)
 
   if (!authed) return <Login onDone={() => setAuthed(true)} />
+
+  const labels: Record<Page, string> = {
+    dashboard: t("nav.dashboard"),
+    sessions: t("nav.sessions"),
+    activity: t("nav.activity"),
+    keys: t("nav.keys"),
+    models: t("nav.models"),
+  }
+
+  function toggleLang() {
+    setLang(lang === "zh" ? "en" : "zh")
+  }
+
+  function langButton() {
+    return (
+      <Button variant="ghost" size="sm" className="gap-1" onClick={toggleLang}>
+        <Languages className="size-4" />
+        {lang === "zh" ? "EN" : "中文"}
+      </Button>
+    )
+  }
 
   function goto(p: Page) {
     setPage(p)
@@ -50,7 +75,7 @@ export default function App() {
         onClick={() => onClick?.(key)}
       >
         <Icon className="size-4" />
-        {label}
+        {labels[key]}
       </button>
     ))
   }
@@ -59,6 +84,7 @@ export default function App() {
     page === "dashboard" ? <Dashboard />
     : page === "sessions" ? <Sessions />
     : page === "activity" ? <Activity />
+    : page === "models" ? <Models />
     : <Keys />
 
   return (
@@ -81,12 +107,16 @@ export default function App() {
           </SheetContent>
         </Sheet>
         <div className="font-bold">🪰 fly-admin</div>
+        <div className="ml-auto">{langButton()}</div>
       </header>
 
       <div className="flex">
         {/* desktop sidebar */}
         <aside className="hidden md:flex w-52 shrink-0 border-r p-4 flex-col sticky top-0 h-screen">
-          <div className="text-lg font-bold mb-4">🪰 fly-admin</div>
+          <div className="flex items-center justify-between mb-4">
+            <div className="text-lg font-bold">🪰 fly-admin</div>
+            {langButton()}
+          </div>
           <nav className="space-y-1">{navItems(setPage)}</nav>
           <div className="mt-auto">
             <Button variant="ghost" size="sm" onClick={() => setAuthed(false)}>
