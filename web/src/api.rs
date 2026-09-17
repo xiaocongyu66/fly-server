@@ -1,8 +1,10 @@
 //! API client: token persistence + fetch helpers.
+//!
+//! Hand-rolled on the fetch API (web_sys) to avoid gloo-net version churn.
 
-use gloo_net::http::Request;
 use serde_json::Value;
-use wasm_bindgen::JsValue;
+use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 
 pub fn token() -> Option<String> {
     web_sys::window()?
@@ -35,22 +37,40 @@ pub fn base() -> String {
 async fn send(method: &str, path: &str, body: Option<String>) -> Result<Value, String> {
     let url = format!("{}{}", base(), path);
     let token = token().unwrap_or_default();
-    let auth = format!("Bearer {token}");
-    let req = match method {
-        "GET" => Request::get(&url),
-        "POST" => Request::post(&url),
-        "DELETE" => Request::delete(&url),
-        "PATCH" => Request::patch(&url),
-        _ => Request::get(&url),
+
+    let window = web_sys::window().ok_or("no window")?;
+    let opts = web_sys::RequestInit::new();
+    opts.set_method(method);
+    if let Some(b) = &body {
+        opts.set_body(&JsValue::from_str(b));
     }
-    .header("Authorization", &auth);
-    let req = match body {
-        Some(b) => req.header("Content-Type", "application/json").body(b),
-        None => req,
-    };
-    let resp = req.send().await.map_err(|e| format!("network: {e:?}"))?;
+    let request = web_sys::Request::new_with_str_and_init(&url, &opts)
+        .map_err(|e| format!("request init: {e:?}"))?;
+    request
+        .headers()
+        .set("Authorization", &format!("Bearer {token}"))
+        .map_err(|e| format!("header: {e:?}"))?;
+    if body.is_some() {
+        request
+            .headers()
+            .set("Content-Type", "application/json")
+            .map_err(|e| format!("header: {e:?}"))?;
+    }
+
+    let resp_val = js_sys::Promise::from(window.fetch_with_request(&request))
+        .await
+        .map_err(|e| format!("fetch: {e:?}"))?;
+    let resp: web_sys::Response = resp_val
+        .dyn_into()
+        .map_err(|_| "fetch returned non-response".to_string())?;
     let status = resp.status();
-    let text = resp.text().await.map_err(|e| format!("read: {e:?}"))?;
+
+    let text_p = resp.text().map_err(|e| format!("text: {e:?}"))?;
+    let text_val = js_sys::Promise::from(text_p)
+        .await
+        .map_err(|e| format!("read: {e:?}"))?;
+    let text = text_val.as_string().unwrap_or_default();
+
     let v: Value = serde_json::from_str(&text).unwrap_or(Value::String(text.clone()));
     if status >= 400 {
         let msg = v["error"]["message"].as_str().unwrap_or(&text).to_string();
@@ -72,8 +92,4 @@ pub async fn post(path: &str, body: Value) -> Result<Value, String> {
 
 pub async fn del(path: &str) -> Result<Value, String> {
     send("DELETE", path, None).await
-}
-
-pub fn js_str(s: &str) -> JsValue {
-    JsValue::from_str(s)
 }
