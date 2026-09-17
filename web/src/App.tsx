@@ -35,6 +35,8 @@ const NAV: { key: Page; label: string; icon: typeof Menu }[] = [
 export default function App() {
   const { lang, setLang, t } = useI18n()
   const [authed, setAuthed] = useState<boolean | null>(!!token() ? null : false)
+  const [page, setPage] = useState<Page>("dashboard")
+  const [sheetOpen, setSheetOpen] = useState(false)
 
   // startup token validation: a stale/fake token is rejected by any /v1 call
   useEffect(() => {
@@ -60,9 +62,6 @@ export default function App() {
   if (authed === null) {
     return <div className="min-h-screen bg-background" />
   }
-  const [page, setPage] = useState<Page>("dashboard")
-  const [sheetOpen, setSheetOpen] = useState(false)
-
   if (!authed) return <Login onDone={() => setAuthed(true)} />
 
   const labels: Record<Page, string> = {
