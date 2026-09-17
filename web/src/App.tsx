@@ -129,7 +129,7 @@ export default function App() {
           </SheetTrigger>
           <SheetContent side="left" className="w-56 p-4">
             <SheetHeader>
-              <SheetTitle>🪰 fly-admin</SheetTitle>
+              <SheetTitle>fly-admin</SheetTitle>
             </SheetHeader>
             <nav className="mt-2 space-y-1">{navItems(goto)}</nav>
             <Separator className="my-3" />
@@ -138,7 +138,7 @@ export default function App() {
             </Button>
           </SheetContent>
         </Sheet>
-        <div className="font-bold">🪰 fly-admin</div>
+        <div className="font-bold">fly-admin</div>
         <div className="ml-auto">{langButton()}</div>
       </header>
 
@@ -146,7 +146,7 @@ export default function App() {
         {/* desktop sidebar — grok2api style fixed rail */}
         <aside className="fixed inset-y-0 left-0 z-30 hidden h-screen w-[288px] flex-col overflow-hidden bg-sidebar px-4 py-6 lg:flex">
           <div className="flex items-center justify-between mb-4">
-            <div className="text-lg font-bold">🪰 fly-admin</div>
+            <div className="text-lg font-bold">fly-admin</div>
             {langButton()}
           </div>
           <nav className="space-y-1">{navItems(setPage)}</nav>

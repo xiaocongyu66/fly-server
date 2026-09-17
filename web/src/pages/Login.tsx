@@ -25,7 +25,7 @@ export function Login({ onDone }: { onDone: () => void }) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm rounded-lg border bg-card p-6 shadow-sm">
-        <h1 className="text-lg font-semibold">🪰 fly-admin</h1>
+        <h1 className="text-lg font-semibold">fly-admin</h1>
         <p className="text-xs text-muted-foreground mb-4">Sign in to the fly-server console</p>
         <input
           className="w-full mb-2 rounded-md border bg-transparent px-3 py-2 text-sm"
