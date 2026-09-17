@@ -2,6 +2,7 @@
 
 use crate::api;
 use dioxus::prelude::*;
+use wasm_bindgen::JsCast;
 
 fn card(title: &str, value: String, accent: &str) -> Element {
     rsx! {
@@ -451,15 +452,19 @@ pub fn Keys() -> Element {
                 tbody {
                     for row in rows.read().iter() {
                         {let id = row["id"].as_str().unwrap_or("").to_string();
+                        let name = row["name"].as_str().unwrap_or("").to_string();
                         let enabled = row["enabled"].as_bool().unwrap_or(false);
+                        let requests = row["usage"]["requests"].to_string();
+                        let ticks = row["usage"]["ticks"].to_string();
+                        let sessions_created = row["usage"]["sessions_created"].to_string();
                         rsx! {
                             tr { class: "border-t",
                                 td { class: "p-2 font-mono text-xs", "{id}" }
-                                td { class: "p-2", "{row['name']}" }
+                                td { class: "p-2", "{name}" }
                                 td { class: "p-2", if enabled { "✓" } else { "✗" } }
-                                td { class: "p-2", "{row['usage']['requests']}" }
-                                td { class: "p-2", "{row['usage']['ticks']}" }
-                                td { class: "p-2", "{row['usage']['sessions_created']}" }
+                                td { class: "p-2", "{requests}" }
+                                td { class: "p-2", "{ticks}" }
+                                td { class: "p-2", "{sessions_created}" }
                                 td { class: "p-2 text-right",
                                     button {
                                         class: "text-xs text-red-500 hover:underline",
