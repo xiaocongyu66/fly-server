@@ -18,25 +18,36 @@ use std::sync::{Arc, Mutex};
 
 pub struct DatasetDef {
     pub tier: &'static str,
-    pub url: &'static str,
+    pub base_url: &'static str,
     pub bytes: u64,
+    /// (remote_filename, local_filename) pairs to download
+    pub files: &'static [(&'static str, &'static str)],
 }
+
+const MALECNS_BASE: &str =
+    "https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome";
 
 pub const DATASETS: &[DatasetDef] = &[
     DatasetDef {
         tier: "lite",
-        url: "https://raw.githubusercontent.com/ruvnet/RuVector/research/connectome-ruvector/examples/connectome-fly/assets/connections_princeton.csv.gz",
-        bytes: 27_554_000,
+        base_url: "https://raw.githubusercontent.com/ruvnet/RuVector/research/connectome-ruvector/examples/connectome-fly/assets",
+        bytes: 27_554_000 + 2_200_000,
+        files: &[
+            ("connections_princeton.csv.gz", "connections.csv.gz"),
+            ("neurons.csv.gz", "neurons.csv.gz"),
+        ],
     },
     DatasetDef {
         tier: "standard",
-        url: "https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/connectome-weights-male-cns-v1.0-minconf-0.5.feather",
+        base_url: "https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome",
         bytes: 1_050_000_000,
+        files: &[("connectome-weights-male-cns-v1.0-minconf-0.5.feather", "connectome_weights.feather")],
     },
     DatasetDef {
         tier: "full",
-        url: "https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/syn-partners-male-cns-v1.0-minconf-0.5-traced-only.feather",
+        base_url: "https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome",
         bytes: 2_970_000_000,
+        files: &[("syn-partners-male-cns-v1.0-minconf-0.5-traced-only.feather", "syn_partners.feather")],
     },
 ];
 
@@ -82,7 +93,52 @@ impl DatasetStore {
     pub fn new(data_dir: PathBuf) -> Self {
         let mut states = HashMap::new();
         for d in DATASETS {
-            states.insert(d.tier.to_string(), TierState::new(d.tier, d.bytes));
+            let mut st = TierState::new(d.tier, d.bytes);
+            // check if files already downloaded on disk
+            let tier_dir = data_dir.join(d.tier);
+            let all_exist = !d.files.is_empty()
+                && d.files.iter().all(|(_, local)| {
+                    let p = tier_dir.join(local);
+                    p.exists() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
+                });
+            if all_exist {
+                // integrity check: verify file sizes match expectations
+                let total_size: u64 = d
+                    .files
+                    .iter()
+                    .filter_map(|(_, local)| {
+                        std::fs::metadata(tier_dir.join(local))
+                            .ok()
+                            .map(|m| m.len())
+                    })
+                    .sum();
+                if total_size == 0 {
+                    // remove incomplete files, force re-download
+                    for (_, local) in d.files {
+                        let _ = std::fs::remove_file(tier_dir.join(local));
+                    }
+                    states.insert(d.tier.to_string(), st);
+                    continue;
+                }
+                if d.tier == "lite" {
+                    let flybin = data_dir
+                        .parent()
+                        .unwrap_or(&data_dir)
+                        .join("substrates")
+                        .join("lite.flybin");
+                    if flybin.exists() {
+                        st.status = Status::Compiled;
+                        st.hint = Some("already compiled: lite.flybin".into());
+                    } else {
+                        st.status = Status::Downloaded;
+                        st.hint = Some("files on disk, compile to enable".into());
+                    }
+                } else {
+                    st.status = Status::Downloaded;
+                    st.hint = Some("feather ingest not implemented".into());
+                }
+            }
+            states.insert(d.tier.to_string(), st);
         }
         Self {
             states: Mutex::new(states),
@@ -132,25 +188,30 @@ impl DatasetStore {
         let store = Arc::clone(self);
         let tier_s = tier.to_string();
 
-        let url = def.url.to_string();
         let out_dir = self.data_dir.join(tier);
-        // use the original filename from the URL for compile_flywire compat
-        let filename = url.rsplit('/').next().unwrap_or("dataset.bin");
-        let out_path = out_dir.join(filename);
+        let files: Vec<(String, String)> = def
+            .files
+            .iter()
+            .map(|(remote, local)| (format!("{}/{}", def.base_url, remote), local.to_string()))
+            .collect();
         std::thread::spawn(move || {
             let _ = std::fs::create_dir_all(&out_dir);
-            match stream_to_file(&url, &out_path, def.bytes, &|got| {
-                store.update_progress(tier_s.as_str(), got)
-            }) {
-                Ok(bytes) => {
-                    store.set_total(tier_s.as_str(), bytes);
-                    store.mark_done(tier_s.as_str());
-                }
-                Err(e) => {
-                    let _ = std::fs::remove_file(&out_path); // clean up truncated file
-                    store.mark_error(tier_s.as_str(), &e);
+            let mut downloaded_total = 0u64;
+            for (url, local_name) in &files {
+                let out_path = out_dir.join(local_name);
+                match stream_to_file(url, &out_path, 0, &|got| {
+                    store.update_progress(tier_s.as_str(), downloaded_total + got)
+                }) {
+                    Ok(bytes) => downloaded_total += bytes,
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&out_path);
+                        store.mark_error(tier_s.as_str(), &e);
+                        return;
+                    }
                 }
             }
+            store.set_total(tier_s.as_str(), downloaded_total);
+            store.mark_done(tier_s.as_str());
         });
         Ok(())
     }
@@ -166,13 +227,32 @@ impl DatasetStore {
     }
 
     pub fn mark_done(&self, tier: &str) {
-        self.set(tier, |st| {
-            st.status = Status::Downloaded;
+        let data_dir = self.data_dir.clone();
+        self.set(tier, move |st| {
             st.downloaded = st.total;
             if st.tier == "lite" {
-                st.status = Status::Compiled;
-                st.hint = Some("compiled to substrate_lite.flybin — restart with --substrate substrate_lite.flybin".into());
+                // auto-compile lite tier using the built-in CSV pipeline
+                let lite_dir = data_dir.join("datasets").join("lite");
+                let out = data_dir.join("substrates").join("lite.flybin");
+                match crate::substrate::compile_flywire(
+                    &lite_dir,
+                    &out,
+                    crate::substrate::Quant::U8,
+                ) {
+                    Ok(r) => {
+                        st.status = Status::Compiled;
+                        st.hint = Some(format!(
+                            "compiled: {} neurons / {} edges → lite.flybin",
+                            r.n_neurons, r.n_edges_aggregated
+                        ));
+                    }
+                    Err(e) => {
+                        st.status = Status::Error;
+                        st.error = Some(format!("compile failed: {e}"));
+                    }
+                }
             } else {
+                st.status = Status::Downloaded;
                 st.hint = Some(
                     "feather ingest not implemented: compile requires the arrow crate (roadmap)"
                         .into(),
