@@ -86,11 +86,19 @@ impl AdminStore {
                     ticks INTEGER NOT NULL DEFAULT 0,
                     sessions_created INTEGER NOT NULL DEFAULT 0
                 );
-                ALTER TABLE api_keys ADD COLUMN rpm_limit INTEGER NOT NULL DEFAULT 0;
-                ALTER TABLE api_keys ADD COLUMN tpm_limit INTEGER NOT NULL DEFAULT 0;
-                ALTER TABLE api_keys ADD COLUMN tick_budget INTEGER NOT NULL DEFAULT 0;",
+        ",
         )
-        .expect("migrate fly.db");
+        .expect("create tables fly.db");
+        // idempotent column migration: ignore "duplicate column" errors
+        for col in ["rpm_limit", "tpm_limit", "tick_budget"] {
+            let sql = format!("ALTER TABLE api_keys ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0");
+            if let Err(e) = conn.execute_batch(&sql) {
+                let msg = e.to_string();
+                if !msg.contains("duplicate column") {
+                    panic!("migrate fly.db: {e}");
+                }
+            }
+        }
 
         let salt = rand_hex(8);
         let admin_pass_hash: [u8; 32] = {
