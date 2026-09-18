@@ -46,7 +46,7 @@ export function Brain3D() {
     try {
       const [nodesResp, edgesResp] = await Promise.all([
         api.post("/v1/query", {}),
-        api.get("/v1/substrate/edges?limit=100000"),
+        api.get("/v1/substrate/edges?limit=3000000"),
       ])
       const neurons: Neuron[] = nodesResp.neurons ?? []
       const rawEdges: [number, number][] = edgesResp.edges ?? []
@@ -126,7 +126,7 @@ export function Brain3D() {
         const lineMat = new THREE.LineBasicMaterial({
           color: 0x4a6fa5,
           transparent: true,
-          opacity: 0.08,
+          opacity: 0.03,
         })
         scene.add(new THREE.LineSegments(lineGeo, lineMat))
       }

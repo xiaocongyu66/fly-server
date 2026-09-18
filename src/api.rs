@@ -277,8 +277,8 @@ fn route_authed(
                 .query
                 .get("limit")
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(2000)
-                .min(100000);
+                .unwrap_or(2000);
+            // no cap: full connectome (2.7M edges ≈ 64MB GPU line buffer)
             json_ok(mgr.sample_edges(limit))
         }
 
