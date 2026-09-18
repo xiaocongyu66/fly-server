@@ -249,7 +249,7 @@ fn route_authed(
                 .get("limit")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(2000)
-                .min(20000);
+                .min(100000);
             json_ok(mgr.sample_edges(limit))
         }
 
