@@ -307,6 +307,49 @@ impl Substrate {
             .collect()
     }
 
+    /// Return a subgraph: N neurons + edges connecting them.
+    /// Guarantees returned edges have both endpoints in the node set.
+    pub fn subgraph(
+        &self,
+        node_limit: usize,
+        edge_limit: usize,
+    ) -> (Vec<SelectedNeuron>, Vec<(u64, u64)>) {
+        let n = self.n_neurons();
+        let node_count = node_limit.min(n);
+        let stride = n.checked_div(node_count).unwrap_or(1);
+
+        // pick nodes with even stride
+        let picked_idx: Vec<u32> = (0..node_count).map(|i| (i * stride) as u32).collect();
+        // build a set for O(1) lookup
+        let in_set: std::collections::HashSet<u32> = picked_idx.iter().copied().collect();
+
+        // pick edges where both endpoints are in the node set
+        let total_edges = self.indices.len();
+        let edge_stride = (total_edges / edge_limit.max(1)).max(1);
+        let mut edges = Vec::new();
+        let mut pos = 0usize;
+        for row in 0..n {
+            for e in self.edges(row) {
+                if pos.is_multiple_of(edge_stride) {
+                    let post = self.indices[e];
+                    if in_set.contains(&post) && in_set.contains(&(row as u32)) {
+                        edges.push((self.root_ids[row], self.root_ids[post as usize]));
+                        if edges.len() >= edge_limit {
+                            break;
+                        }
+                    }
+                }
+                pos += 1;
+            }
+            if edges.len() >= edge_limit {
+                break;
+            }
+        }
+
+        let details = self.selected_details(&picked_idx);
+        (details, edges)
+    }
+
     /// Deterministically sample `limit` edges from the CSR connectivity.
     pub fn sample_edges(&self, limit: usize) -> Vec<(u64, u64)> {
         let total = self.indices.len();

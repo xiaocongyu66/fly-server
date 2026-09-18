@@ -163,13 +163,23 @@ impl DatasetStore {
     /// thread is spawned by the caller via `spawn_download_thread` (needs the
     /// Arc to publish progress from the worker).
     pub fn prepare_download(&self, tier: &str) -> Result<(), String> {
-        if !DATASETS.iter().any(|d| d.tier == tier) {
-            return Err(format!("unknown tier `{tier}`"));
-        }
+        let def = DATASETS
+            .iter()
+            .find(|d| d.tier == tier)
+            .ok_or_else(|| format!("unknown tier `{tier}`"))?;
         let st = self.states.lock().unwrap();
         let cur = st.get(tier).ok_or("unknown tier")?;
         if cur.status == Status::Downloading {
             return Err("download already in flight".into());
+        }
+        // skip if files already exist and are non-empty
+        let tier_dir = self.data_dir.join(tier);
+        let all_exist = def.files.iter().all(|(_, local)| {
+            let p = tier_dir.join(local);
+            p.exists() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
+        });
+        if all_exist {
+            return Err("files already downloaded".into());
         }
         Ok(())
     }
@@ -196,15 +206,38 @@ impl DatasetStore {
             let mut downloaded_total = 0u64;
             for (url, local_name) in &files {
                 let out_path = out_dir.join(local_name);
-                match stream_to_file(url, &out_path, 0, &|got| {
-                    store.update_progress(tier_s.as_str(), downloaded_total + got)
-                }) {
-                    Ok(bytes) => downloaded_total += bytes,
-                    Err(e) => {
-                        let _ = std::fs::remove_file(&out_path);
-                        store.mark_error(tier_s.as_str(), &e);
-                        return;
+                let mut ok = false;
+                for attempt in 0..3 {
+                    match stream_to_file(url, &out_path, 0, &|got| {
+                        store.update_progress(tier_s.as_str(), downloaded_total + got)
+                    }) {
+                        Ok(bytes) => {
+                            downloaded_total += bytes;
+                            ok = true;
+                            break;
+                        }
+                        Err(e) => {
+                            if attempt < 2 {
+                                eprintln!(
+                                    "download retry {}/3 for {}: {}",
+                                    attempt + 1,
+                                    local_name,
+                                    e
+                                );
+                                std::thread::sleep(std::time::Duration::from_secs(2));
+                            } else {
+                                let _ = std::fs::remove_file(&out_path);
+                                store.mark_error(
+                                    tier_s.as_str(),
+                                    &format!("{} (3 retries exhausted)", e),
+                                );
+                                return;
+                            }
+                        }
                     }
+                }
+                if !ok {
+                    return;
                 }
             }
             store.set_total(tier_s.as_str(), downloaded_total);

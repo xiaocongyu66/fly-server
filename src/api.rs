@@ -200,6 +200,13 @@ fn route_authed(
             ("POST", Some("datasets"), Some(tier), Some("download")) => {
                 match datasets.start_download(tier) {
                     Ok(()) => json_ok(serde_json::json!({"tier": tier, "started": true})),
+                    Err(e) if e.contains("already downloaded") => {
+                        // files exist on disk — just refresh status
+                        json_ok(serde_json::json!({"tier": tier, "status": "already_downloaded"}))
+                    }
+                    Err(e) if e.contains("already in flight") => {
+                        json_ok(serde_json::json!({"tier": tier, "status": "downloading"}))
+                    }
                     Err(e) => json_err(&ApiError::invalid_request("download_error", e, None)),
                 }
             }
@@ -243,6 +250,21 @@ fn route_authed(
             Ok(b) => json_ok(mgr.query(&b)),
             Err(resp) => resp,
         },
+        ("GET", ["v1", "substrate", "graph"]) => {
+            let nodes = req
+                .query
+                .get("nodes")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(500)
+                .min(5000);
+            let edges = req
+                .query
+                .get("edges")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5000)
+                .min(50000);
+            json_ok(mgr.subgraph(nodes, edges))
+        }
         ("GET", ["v1", "substrate", "edges"]) => {
             let limit = req
                 .query

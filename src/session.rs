@@ -156,6 +156,12 @@ impl SessionManager {
     }
 
     /// Deterministically sample edges from the local connectome.
+    /// Return a connected subgraph for 3D rendering.
+    pub fn subgraph(&self, node_limit: usize, edge_limit: usize) -> serde_json::Value {
+        let (neurons, edges) = self.substrate.subgraph(node_limit, edge_limit);
+        serde_json::json!({"neurons": neurons, "edges": edges})
+    }
+
     pub fn sample_edges(&self, limit: usize) -> serde_json::Value {
         let edges = self.substrate.sample_edges(limit);
         serde_json::json!({"count": edges.len(), "edges": edges})
