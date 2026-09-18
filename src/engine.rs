@@ -16,6 +16,7 @@ use std::sync::{Arc, Barrier, Mutex};
 
 use crate::substrate::Substrate;
 
+pub mod gpu;
 pub mod simd;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
