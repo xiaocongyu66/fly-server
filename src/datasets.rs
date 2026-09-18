@@ -91,14 +91,15 @@ impl DatasetStore {
         let mut states = HashMap::new();
         for d in DATASETS {
             let mut st = TierState::new(d.tier, d.bytes);
-            // check if files already downloaded on disk
+            // check if any non-empty files exist in the tier directory
             let tier_dir = data_dir.join(d.tier);
-            let all_exist = !d.files.is_empty()
-                && d.files.iter().all(|(_, local)| {
-                    let p = tier_dir.join(local);
-                    p.exists() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
-                });
-            if all_exist {
+            let has_files = std::fs::read_dir(&tier_dir)
+                .map(|rd| {
+                    rd.filter_map(|e| e.ok())
+                        .any(|e| e.metadata().map(|m| m.len() > 1000).unwrap_or(false))
+                })
+                .unwrap_or(false);
+            if has_files {
                 // integrity check: verify file sizes match expectations
                 let total_size: u64 = d
                     .files
