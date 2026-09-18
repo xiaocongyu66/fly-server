@@ -39,6 +39,9 @@ export function Query() {
       try {
         const m = await api.get("/v1/models")
         setKnownRegions(m.data?.[0]?.regions ?? [])
+        if (!m.data?.length) {
+          setErr("no model loaded — download one on the Models page first")
+        }
       } catch { /* ignore */ }
     })()
   }, [])

@@ -26,7 +26,7 @@ struct LoginRequest {
 
 #[allow(clippy::too_many_arguments)]
 pub fn run_server(
-    substrate: Arc<Substrate>,
+    substrate: Option<Arc<Substrate>>,
     substrate_id: String,
     port: u16,
     engine_cfg: crate::engine::EngineConfig,
@@ -249,7 +249,7 @@ fn route_authed(
                         Some("query"),
                     ));
                 }
-                let regions: Vec<String> = mgr.regions();
+                let regions: Vec<String> = mgr.regions().unwrap_or_default();
                 match crate::llm::parse_via_llm(llm, &q, &regions) {
                     Ok(sel_json) => json_ok(sel_json),
                     Err(e) => json_err(&ApiError::invalid_request("llm_error", e, None)),
@@ -286,7 +286,10 @@ fn route_authed(
         },
 
         ("POST", ["v1", "query"]) => match parse_body::<crate::types::NeuronSelector>(req) {
-            Ok(b) => json_ok(mgr.query(&b)),
+            Ok(b) => match mgr.query(&b) {
+                Ok(v) => json_ok(v),
+                Err(e) => json_err(&e),
+            },
             Err(resp) => resp,
         },
         ("GET", ["v1", "substrate", "graph"]) => {
@@ -302,7 +305,10 @@ fn route_authed(
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(5000)
                 .min(50000);
-            json_ok(mgr.subgraph(nodes, edges))
+            match mgr.subgraph(nodes, edges) {
+                Ok(v) => json_ok(v),
+                Err(e) => json_err(&e),
+            }
         }
         ("GET", ["v1", "substrate", "edges"]) => {
             let limit = req
@@ -311,7 +317,10 @@ fn route_authed(
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(2000);
             // no cap: full connectome (2.7M edges ≈ 64MB GPU line buffer)
-            json_ok(mgr.sample_edges(limit))
+            match mgr.sample_edges(limit) {
+                Ok(v) => json_ok(v),
+                Err(e) => json_err(&e),
+            }
         }
 
         ("GET", ["v1", "sessions"]) => json_ok(mgr.list()),
@@ -468,7 +477,7 @@ mod tests {
     #[test]
     fn health_and_models() {
         let mgr = SessionManager::new(
-            mini(),
+            Some(mini()),
             "test-substrate".into(),
             crate::engine::EngineConfig::default(),
         );
@@ -497,7 +506,7 @@ mod tests {
     #[test]
     fn create_and_step() {
         let mgr = SessionManager::new(
-            mini(),
+            Some(mini()),
             "test-substrate".into(),
             crate::engine::EngineConfig::default(),
         );

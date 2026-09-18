@@ -48,7 +48,7 @@ pub struct SessionState {
 }
 
 pub struct SessionManager {
-    substrate: Arc<Substrate>,
+    substrate: Option<Arc<Substrate>>,
     substrate_id: String,
     engine_cfg: RwLock<EngineConfig>,
     sessions: Mutex<HashMap<String, SessionState>>,
@@ -60,7 +60,23 @@ pub struct SessionManager {
 }
 
 impl SessionManager {
-    pub fn new(substrate: Arc<Substrate>, substrate_id: String, engine_cfg: EngineConfig) -> Self {
+    /// Access the loaded substrate, or a guidance error if none loaded.
+    fn substrate(&self) -> ApiResult<Arc<Substrate>> {
+        self.substrate.clone().ok_or_else(|| {
+            ApiError {
+                err_type: "invalid_request_error",
+                code: "no_model_loaded",
+                message: "no brain model loaded — download one on the Models page (admin UI) and restart, or pass --substrate".into(),
+                param: None,
+            }
+        })
+    }
+
+    pub fn new(
+        substrate: Option<Arc<Substrate>>,
+        substrate_id: String,
+        engine_cfg: EngineConfig,
+    ) -> Self {
         Self {
             substrate,
             substrate_id,
@@ -125,46 +141,49 @@ impl SessionManager {
     pub fn models(&self) -> ModelsResponse {
         ModelsResponse {
             object: "list".into(),
-            data: vec![serde_json::json!({
-                "id": &self.substrate_id,
-                "object": "substrate",
-                "n_neurons": self.substrate.header.n_neurons,
-                "n_edges": self.substrate.header.n_edges,
-                "source": &self.substrate.header.source,
-                "regions": &self.substrate.header.string_tables.regions,
-                "cell_types": &self.substrate.header.string_tables.cell_types,
-                "nt_types": &self.substrate.header.string_tables.nt_types,
-            })],
+            data: match &self.substrate {
+                Some(sub) => vec![serde_json::json!({
+                    "id": &self.substrate_id,
+                    "object": "substrate",
+                    "n_neurons": sub.header.n_neurons,
+                    "n_edges": sub.header.n_edges,
+                    "source": &sub.header.source,
+                    "regions": &sub.header.string_tables.regions,
+                    "cell_types": &sub.header.string_tables.cell_types,
+                    "nt_types": &sub.header.string_tables.nt_types,
+                })],
+                None => vec![],
+            },
         }
     }
 
     /// Session summaries for the admin UI list view.
-    pub fn regions(&self) -> Vec<String> {
-        self.substrate.header.string_tables.regions.clone()
+    pub fn regions(&self) -> ApiResult<Vec<String>> {
+        Ok(self.substrate()?.header.string_tables.regions.clone())
     }
 
     /// Resolve a selector directly against the substrate (no session).
-    pub fn query(&self, sel: &crate::types::NeuronSelector) -> serde_json::Value {
-        let matched = self.substrate.select(sel);
+    pub fn query(&self, sel: &crate::types::NeuronSelector) -> ApiResult<serde_json::Value> {
+        let matched = self.substrate()?.select(sel);
         let count = matched.len() as u64;
         let limit = (sel.limit.unwrap_or(200000) as usize).min(matched.len());
         // even stride sampling when the match set exceeds the limit
         let stride = matched.len().checked_div(limit).unwrap_or(1);
         let picked: Vec<u32> = (0..limit).map(|i| matched[i * stride]).collect();
-        let neurons = self.substrate.selected_details(&picked);
-        serde_json::json!({"count": count, "returned": neurons.len(), "neurons": neurons})
+        let neurons = self.substrate()?.selected_details(&picked);
+        Ok(serde_json::json!({"count": count, "returned": neurons.len(), "neurons": neurons}))
     }
 
     /// Deterministically sample edges from the local connectome.
     /// Return a connected subgraph for 3D rendering.
-    pub fn subgraph(&self, node_limit: usize, edge_limit: usize) -> serde_json::Value {
-        let (neurons, edges) = self.substrate.subgraph(node_limit, edge_limit);
-        serde_json::json!({"neurons": neurons, "edges": edges})
+    pub fn subgraph(&self, node_limit: usize, edge_limit: usize) -> ApiResult<serde_json::Value> {
+        let (neurons, edges) = self.substrate()?.subgraph(node_limit, edge_limit);
+        Ok(serde_json::json!({"neurons": neurons, "edges": edges}))
     }
 
-    pub fn sample_edges(&self, limit: usize) -> serde_json::Value {
-        let edges = self.substrate.sample_edges(limit);
-        serde_json::json!({"count": edges.len(), "edges": edges})
+    pub fn sample_edges(&self, limit: usize) -> ApiResult<serde_json::Value> {
+        let edges = self.substrate()?.sample_edges(limit);
+        Ok(serde_json::json!({"count": edges.len(), "edges": edges}))
     }
 
     /// Update engine config for all future ticks on all sessions.
@@ -273,7 +292,7 @@ impl SessionManager {
         let dt_ms = req.dt_ms.unwrap_or(self.engine_cfg.read().unwrap().dt_ms);
         let mut cfg = self.engine_cfg.read().unwrap().clone();
         cfg.dt_ms = dt_ms;
-        let engine = Engine::new(self.substrate.clone(), cfg);
+        let engine = Engine::new(self.substrate()?.clone(), cfg);
         let state = SessionState {
             id: id.clone(),
             created_at: unix_secs(),
@@ -333,7 +352,10 @@ impl SessionManager {
 
     /// Resolve a NeuronSelector into dense neuron indices.
     fn resolve_selector(&self, sel: &NeuronSelector) -> Vec<u32> {
-        let sub = &self.substrate;
+        let sub = match self.substrate.as_ref() {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
         let n = sub.n_neurons();
         let mut out: Vec<u32> = Vec::new();
         if !sel.ids.is_empty() {
@@ -420,7 +442,7 @@ impl SessionManager {
         let steps = req.steps.clamp(1, 10_000);
         let v_thresh = self.engine_cfg.read().unwrap().v_thresh;
         let snapshot_every = self.snapshot_every;
-        let substrate = self.substrate.clone();
+        let substrate = self.substrate()?.clone();
         let mut sessions = self.sessions.lock().unwrap();
         let s = sessions
             .get_mut(id)
@@ -589,7 +611,7 @@ mod tests {
 
     fn mgr() -> SessionManager {
         let mut m = SessionManager::new(
-            mini_substrate(),
+            Some(mini_substrate()),
             "test-substrate".into(),
             crate::engine::EngineConfig::default(),
         );

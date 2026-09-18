@@ -209,61 +209,35 @@ fn cmd_serve(args: &[String]) -> i32 {
                     p
                 }
                 None => {
-                    // auto-deploy: download the lite tier and compile it
-                    eprintln!("auto: no substrate found — bootstrapping lite tier (FlyWire v783, ~28 MB)…");
-                    let lite_dir = data_root.join("datasets").join("lite");
-                    std::fs::create_dir_all(&lite_dir).ok();
-                    let raw = lite_dir.join("connections.csv.gz");
-                    let neurons = lite_dir.join("neurons.csv.gz");
-                    let lite_url = |name: &str| {
-                        format!(
-                            "https://raw.githubusercontent.com/ruvnet/RuVector/research/connectome-ruvector/examples/connectome-fly/assets/{name}"
-                        )
-                    };
-                    if fly_server::datasets::download_to(
-                        &lite_url("connections_princeton.csv.gz"),
-                        &raw,
-                    )
-                    .is_err()
-                    {
-                        eprintln!("error: lite download failed — pass --substrate explicitly");
-                        return 1;
-                    }
-                    if fly_server::datasets::download_to(&lite_url("neurons.csv.gz"), &neurons)
-                        .is_err()
-                    {
-                        eprintln!("error: neurons download failed");
-                        return 1;
-                    }
-                    let out = data_root.join("substrates").join("lite.flybin");
-                    match substrate::compile_flywire(&lite_dir, &out, substrate::Quant::U8) {
-                        Ok(r) => eprintln!(
-                            "auto: compiled {} neurons / {} edges → {}",
-                            r.n_neurons,
-                            r.n_edges_aggregated,
-                            out.display()
-                        ),
-                        Err(e) => {
-                            eprintln!("error: compile failed: {e}");
-                            return 1;
-                        }
-                    }
-                    out
+                    // no user-selected substrate: start WITHOUT a model.
+                    // The admin UI (Models page) is fully usable for
+                    // downloading/compiling; brain-dependent endpoints
+                    // return a clear guidance error until one is loaded.
+                    eprintln!("no substrate loaded — start via Models page or --substrate <path>");
+                    PathBuf::new()
                 }
             }
         }
     };
-    let substrate = match substrate::load(&substrate_path) {
-        Ok(s) => Arc::new(s),
-        Err(e) => {
-            eprintln!("error loading substrate: {e}");
-            return 1;
+    let substrate = if substrate_path.as_os_str().is_empty() {
+        None
+    } else {
+        match substrate::load(&substrate_path) {
+            Ok(s) => Some(Arc::new(s)),
+            Err(e) => {
+                eprintln!("error loading substrate: {e}");
+                return 1;
+            }
         }
     };
-    let substrate_id = substrate_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "substrate".into());
+    let substrate_id = if substrate_path.as_os_str().is_empty() {
+        String::new()
+    } else {
+        substrate_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "substrate".into())
+    };
     let admin = Arc::new(fly_server::admin::AdminStore::new(
         &admin_user,
         &admin_pass,
@@ -277,9 +251,13 @@ fn cmd_serve(args: &[String]) -> i32 {
         key: flag(args, "--llm-key"),
         model: flag(args, "--llm-model").unwrap_or_else(|| "default".into()),
     });
+    let (n_neurons, n_edges) = substrate
+        .as_ref()
+        .map(|s| (s.n_neurons(), s.header.n_edges))
+        .unwrap_or((0, 0));
     eprintln!(
         "fly-server {} — substrate \"{}\": {} neurons, {} edges, threads={}, simd={}, admin=\"{}\", listening on {}:{}",
-        fly_server::VERSION, substrate_id, substrate.n_neurons(), substrate.header.n_edges, cfg.n_threads, cfg.use_simd, admin_user, host, port
+        fly_server::VERSION, substrate_id, n_neurons, n_edges, cfg.n_threads, cfg.use_simd, admin_user, host, port
     );
     match api::run_server(
         substrate,
