@@ -134,17 +134,22 @@ impl DatasetStore {
 
         let url = def.url.to_string();
         let out_dir = self.data_dir.join(tier);
-        let out_path = out_dir.join("dataset.bin");
+        // use the original filename from the URL for compile_flywire compat
+        let filename = url.rsplit('/').next().unwrap_or("dataset.bin");
+        let out_path = out_dir.join(filename);
         std::thread::spawn(move || {
             let _ = std::fs::create_dir_all(&out_dir);
-            match stream_to_file(&url, &out_path, &|got| {
+            match stream_to_file(&url, &out_path, def.bytes, &|got| {
                 store.update_progress(tier_s.as_str(), got)
             }) {
                 Ok(bytes) => {
                     store.set_total(tier_s.as_str(), bytes);
                     store.mark_done(tier_s.as_str());
                 }
-                Err(e) => store.mark_error(tier_s.as_str(), &e),
+                Err(e) => {
+                    let _ = std::fs::remove_file(&out_path); // clean up truncated file
+                    store.mark_error(tier_s.as_str(), &e);
+                }
             }
         });
         Ok(())
@@ -186,13 +191,14 @@ impl DatasetStore {
 
 /// One-shot download to a path (no progress callback) — bootstrap path.
 pub fn download_to(url: &str, out_path: &std::path::Path) -> Result<u64, String> {
-    stream_to_file(url, out_path, &|_| {})
+    stream_to_file(url, out_path, 0, &|_| {})
 }
 
 /// Stream a URL to a file, reporting progress in bytes.
 pub fn stream_to_file(
     url: &str,
     out_path: &std::path::Path,
+    expected: u64,
     on_progress: &dyn Fn(u64),
 ) -> Result<u64, String> {
     let resp = ureq::get(url)
