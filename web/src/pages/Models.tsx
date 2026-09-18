@@ -69,6 +69,17 @@ export function Models() {
     return () => clearInterval(h)
   }, [refresh])
 
+  async function activate(tier: string) {
+    setErr("")
+    try {
+      const v = await api.post(`/v1/admin/datasets/${tier}/activate`, {})
+      setLoadedId(v.activated ?? "")
+    } catch (e: any) {
+      setErr(e.message)
+    }
+    refresh()
+  }
+
   async function download(tier: string) {
     setErr("")
     setTiers((prev) =>
@@ -167,11 +178,17 @@ export function Models() {
                 {!isLoadedSubstrate(tier.tier) && !busy && (
                   <Button
                     size="sm"
-                    disabled={compiled}
-                    onClick={() => download(tier.tier)}
+                    variant={tier.status === "downloaded" ? "outline" : "default"}
+                    onClick={() =>
+                      tier.status === "downloaded" || tier.status === "compiled"
+                        ? activate(tier.tier)
+                        : download(tier.tier)
+                    }
                     className="w-full"
                   >
-                    {compiled ? t("models.ready") : t("models.download")}
+                    {tier.status === "downloaded" || tier.status === "compiled"
+                      ? t("models.activate")
+                      : t("models.download")}
                   </Button>
                 )}
               </CardContent>

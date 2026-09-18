@@ -29,13 +29,23 @@ pub fn run_server(
     substrate: Option<Arc<Substrate>>,
     substrate_id: String,
     port: u16,
-    engine_cfg: crate::engine::EngineConfig,
+    mut engine_cfg: crate::engine::EngineConfig,
     admin_dist: Option<std::path::PathBuf>,
     admin: Arc<AdminStore>,
     datasets: Arc<crate::datasets::DatasetStore>,
     llm: Arc<crate::llm::LlmConfig>,
     host: &str,
+    data_dir: std::path::PathBuf,
 ) -> std::io::Result<()> {
+    // persist engine settings so restarts keep user choices
+    let settings_path = data_dir.join("config.json");
+    if settings_path.exists() {
+        if let Ok(saved) = std::fs::read_to_string(&settings_path) {
+            if let Ok(cfg) = serde_json::from_str::<crate::engine::EngineConfig>(&saved) {
+                engine_cfg = cfg;
+            }
+        }
+    }
     let mgr = Arc::new(SessionManager::new(substrate, substrate_id, engine_cfg));
     mgr.start_gc_thread(std::time::Duration::from_secs(5));
     http::serve(host, port, move |req| {
@@ -46,7 +56,7 @@ pub fn run_server(
                 }
             }
         }
-        route(&mgr, &admin, &datasets, &llm, req)
+        route(&mgr, &admin, &datasets, &llm, &settings_path, req)
     })
 }
 
@@ -68,6 +78,7 @@ fn route(
     admin: &AdminStore,
     datasets: &Arc<crate::datasets::DatasetStore>,
     llm: &crate::llm::LlmConfig,
+    settings_path: &std::path::Path,
     req: &HttpRequest,
 ) -> HttpResponse {
     let segs: Vec<&str> = req
@@ -119,6 +130,7 @@ fn route(
         admin,
         datasets,
         llm,
+        settings_path,
         role.as_str(),
         &key_id,
         req,
@@ -133,6 +145,7 @@ fn route_authed(
     admin: &AdminStore,
     datasets: &Arc<crate::datasets::DatasetStore>,
     llm: &crate::llm::LlmConfig,
+    settings_path: &std::path::Path,
     role: &str,
     key_id: &Option<String>,
     req: &HttpRequest,
@@ -191,19 +204,31 @@ fn route_authed(
             ("POST", Some("settings"), None, _) => {
                 with_body(req, |b: crate::engine::EngineConfig| {
                     mgr.update_engine_config(&b);
+                    // persist for restarts
+                    if let Ok(json) = serde_json::to_string_pretty(&b) {
+                        let _ = std::fs::write(settings_path, json);
+                    }
                     Ok(mgr.get_engine_config())
                 })
             }
-            ("GET", Some("memory"), None, _) => {
-                let sessions = mgr.session_count();
-                let datasets_count = 3;
-                json_ok(serde_json::json!({
-                    "active_sessions": sessions,
-                    "max_sessions": 50,
-                    "session_ttl_secs": 1800,
-                    "dataset_tiers": datasets_count,
-                }))
+            ("POST", Some("substrate"), Some(rel_path), Some("activate")) => {
+                // hot-swap to a .flybin under data_dir/substrates/
+                let rel = rel_path.replace("..", "");
+                let full = std::path::PathBuf::from("substrates").join(&rel);
+                match crate::substrate::load(&full) {
+                    Ok(sub) => {
+                        let id = full
+                            .file_stem()
+                            .map(|s| s.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        let cleared = mgr.reload_substrate(std::sync::Arc::new(sub), id.clone());
+                        json_ok(serde_json::json!({"activated": id, "sessions_cleared": cleared}))
+                    }
+                    Err(e) => json_err(&ApiError::not_found(format!("substrate load failed: {e}"))),
+                }
             }
+            ("GET", Some("memory"), None, _) => json_ok(mgr.memory_stats()),
+            ("POST", Some("memory"), Some("gc"), None) => json_ok(mgr.force_gc()),
             ("POST", Some("datasets"), Some(tier), Some("download")) => {
                 match datasets.start_download(tier) {
                     Ok(()) => json_ok(serde_json::json!({"tier": tier, "started": true})),
@@ -490,14 +515,28 @@ mod tests {
             std::path::PathBuf::from("/tmp/test_keys1.json"),
         );
         let llm = crate::llm::LlmConfig::default();
-        let r = route(&mgr, &admin, &datasets, &llm, &req("GET", "/health", ""));
+        let r = route(
+            &mgr,
+            &admin,
+            &datasets,
+            &llm,
+            std::path::Path::new("/tmp"),
+            &req("GET", "/health", ""),
+        );
         assert_eq!(r.status, 200);
         let key = admin.create_key("t", 0, 0, 0);
         let mut req = req("GET", "/v1/models", "");
         req.headers
             .push(("authorization".into(), format!("Bearer {}", key.secret)));
         let llm = crate::llm::LlmConfig::default();
-        let r = route(&mgr, &admin, &datasets, &llm, &req);
+        let r = route(
+            &mgr,
+            &admin,
+            &datasets,
+            &llm,
+            std::path::Path::new("/tmp"),
+            &req,
+        );
         let Body::Bytes(b) = r.body else { panic!() };
         let s = String::from_utf8(b).unwrap();
         assert!(s.contains("test-substrate"));
@@ -524,7 +563,14 @@ mod tests {
             let mut rq = req(method, path, body);
             rq.headers
                 .push(("authorization".into(), format!("Bearer {}", key.secret)));
-            route(&mgr, &admin, &datasets, &llm, &rq)
+            route(
+                &mgr,
+                &admin,
+                &datasets,
+                &llm,
+                std::path::Path::new("/tmp"),
+                &rq,
+            )
         };
         let r = authed("POST", "/v1/sessions", r#"{"substrate":"test-substrate"}"#);
         assert_eq!(r.status, 200);
@@ -537,7 +583,15 @@ mod tests {
 
         // unauthenticated: 401 (does not leak route existence)
         assert_eq!(
-            route(&mgr, &admin, &datasets, &llm, &req("GET", "/nope", "")).status,
+            route(
+                &mgr,
+                &admin,
+                &datasets,
+                &llm,
+                std::path::Path::new("/tmp"),
+                &req("GET", "/nope", "")
+            )
+            .status,
             401
         );
         let r = authed("GET", "/nope", "");

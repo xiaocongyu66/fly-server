@@ -48,8 +48,8 @@ pub struct SessionState {
 }
 
 pub struct SessionManager {
-    substrate: Option<Arc<Substrate>>,
-    substrate_id: String,
+    substrate: RwLock<Option<Arc<Substrate>>>,
+    substrate_id: RwLock<String>,
     engine_cfg: RwLock<EngineConfig>,
     sessions: Mutex<HashMap<String, SessionState>>,
     snapshots: Mutex<snapshot::SnapshotStore>,
@@ -62,7 +62,7 @@ pub struct SessionManager {
 impl SessionManager {
     /// Access the loaded substrate, or a guidance error if none loaded.
     fn substrate(&self) -> ApiResult<Arc<Substrate>> {
-        self.substrate.clone().ok_or_else(|| {
+        self.substrate.read().unwrap().clone().ok_or_else(|| {
             ApiError {
                 err_type: "invalid_request_error",
                 code: "no_model_loaded",
@@ -78,8 +78,8 @@ impl SessionManager {
         engine_cfg: EngineConfig,
     ) -> Self {
         Self {
-            substrate,
-            substrate_id,
+            substrate: RwLock::new(substrate),
+            substrate_id: RwLock::new(substrate_id),
             engine_cfg: RwLock::new(engine_cfg),
             sessions: Mutex::new(HashMap::new()),
             snapshots: Mutex::new(snapshot::SnapshotStore::new(8)),
@@ -126,6 +126,31 @@ impl SessionManager {
         removed
     }
 
+    /// Memory statistics for the /memory endpoint.
+    pub fn memory_stats(&self) -> serde_json::Value {
+        let sessions = self.sessions.lock().unwrap();
+        let mut total_items = 0usize;
+        for s in sessions.values() {
+            total_items += s.log.len();
+        }
+        let snapshots = self.snapshots.lock().unwrap();
+        serde_json::json!({
+            "active_sessions": sessions.len(),
+            "max_sessions": self.max_sessions,
+            "session_ttl_secs": self.session_ttl.as_secs(),
+            "total_log_items": total_items,
+            "total_snapshots": snapshots.total_len(),
+        })
+    }
+
+    /// Force full GC regardless of TTL (admin endpoint).
+    pub fn force_gc(&self) -> serde_json::Value {
+        let before = self.sessions.lock().unwrap().len();
+        let removed = self.gc();
+        let after = self.sessions.lock().unwrap().len();
+        serde_json::json!({"sessions_before": before, "removed": removed, "sessions_after": after})
+    }
+
     /// Background GC thread — call once at server startup.
     pub fn start_gc_thread(self: &Arc<Self>, interval: std::time::Duration) {
         let store = Arc::clone(self);
@@ -141,9 +166,9 @@ impl SessionManager {
     pub fn models(&self) -> ModelsResponse {
         ModelsResponse {
             object: "list".into(),
-            data: match &self.substrate {
+            data: match self.substrate.read().unwrap().as_ref() {
                 Some(sub) => vec![serde_json::json!({
-                    "id": &self.substrate_id,
+                    "id": self.substrate_id.read().unwrap().clone(),
                     "object": "substrate",
                     "n_neurons": sub.header.n_neurons,
                     "n_edges": sub.header.n_edges,
@@ -260,6 +285,23 @@ impl SessionManager {
         result
     }
 
+    /// Hot-swap the loaded substrate: replace the model atomically and
+    /// clear all sessions (their engine state belongs to the old model).
+    pub fn reload_substrate(&self, new_substrate: Arc<Substrate>, new_id: String) -> usize {
+        {
+            let mut sub = self.substrate.write().unwrap();
+            *sub = Some(new_substrate);
+        }
+        {
+            let mut id = self.substrate_id.write().unwrap();
+            *id = new_id;
+        }
+        let mut sessions = self.sessions.lock().unwrap();
+        let cleared = sessions.len();
+        sessions.clear();
+        cleared
+    }
+
     pub fn session_count(&self) -> usize {
         self.sessions.lock().unwrap().len()
     }
@@ -274,12 +316,13 @@ impl SessionManager {
     }
 
     pub fn create(&self, req: CreateSessionRequest) -> ApiResult<SessionObject> {
-        if !req.substrate.is_empty() && req.substrate != self.substrate_id {
+        if !req.substrate.is_empty() && req.substrate != *self.substrate_id.read().unwrap() {
             return Err(ApiError::invalid_request(
                 "substrate_not_found",
                 format!(
                     "unknown substrate `{}` (available: `{}`)",
-                    req.substrate, self.substrate_id
+                    req.substrate,
+                    self.substrate_id.read().unwrap()
                 ),
                 Some("substrate"),
             ));
@@ -297,7 +340,7 @@ impl SessionManager {
             id: id.clone(),
             created_at: unix_secs(),
             last_activity: std::time::Instant::now(),
-            substrate_id: self.substrate_id.clone(),
+            substrate_id: self.substrate_id.read().unwrap().clone(),
             dt_ms,
             metadata: req.metadata,
             engine,
@@ -352,8 +395,8 @@ impl SessionManager {
 
     /// Resolve a NeuronSelector into dense neuron indices.
     fn resolve_selector(&self, sel: &NeuronSelector) -> Vec<u32> {
-        let sub = match self.substrate.as_ref() {
-            Some(s) => s,
+        let sub = match self.substrate.read().unwrap().as_ref() {
+            Some(s) => s.clone(),
             None => return Vec::new(),
         };
         let n = sub.n_neurons();
@@ -540,7 +583,7 @@ impl SessionManager {
                 )
             })?;
         let new_req = CreateSessionRequest {
-            substrate: self.substrate_id.clone(),
+            substrate: self.substrate_id.read().unwrap().clone(),
             adapters: Vec::new(),
             dt_ms: None,
             metadata: req.metadata,

@@ -269,6 +269,7 @@ fn cmd_serve(args: &[String]) -> i32 {
         datasets,
         llm,
         &host,
+        data_root,
     ) {
         Ok(()) => 0,
         Err(e) => {
