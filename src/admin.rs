@@ -332,15 +332,22 @@ impl AdminStore {
         sessions_created: u64,
     ) {
         if let Some(id) = key_id {
-            self.conn
-                .lock()
-                .unwrap()
-                .execute(
-                    "UPDATE usage SET requests = requests + ?1, ticks = ticks + ?2,
-                     sessions_created = sessions_created + ?3 WHERE key_id = ?4",
-                    rusqlite::params![requests as i64, ticks as i64, sessions_created as i64, id],
-                )
-                .ok();
+            let conn = self.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE usage SET requests = requests + ?1, ticks = ticks + ?2,
+                 sessions_created = sessions_created + ?3 WHERE key_id = ?4",
+                rusqlite::params![requests as i64, ticks as i64, sessions_created as i64, id],
+            )
+            .ok();
+            // minute window counters (for RPM/TPM enforcement)
+            let now_min = (now_secs() / 60) as i64;
+            conn.execute(
+                "INSERT INTO rate_windows (key_id, minute, requests, ticks) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(key_id, minute) DO UPDATE SET
+                   requests = requests + ?3, ticks = ticks + ?4",
+                rusqlite::params![id, now_min, requests as i64, ticks as i64],
+            )
+            .ok();
         }
     }
 

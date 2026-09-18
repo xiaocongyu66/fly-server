@@ -230,9 +230,10 @@ impl SessionManager {
             )?;
             Ok(serde_json::json!({
                 "object": "simulation",
-                "spikes": resp.n_spikes,
+                "spikes_last_tick": resp.n_spikes,
                 "ticks": resp.tick,
                 "actions": resp.actions,
+                "usage": resp.usage,
             }))
         })();
         // always clean up the internal session
