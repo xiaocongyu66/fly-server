@@ -48,7 +48,7 @@ export function Dashboard() {
           setRequests(String(v.total?.requests ?? 0))
         } catch { /* ignore */ }
       })()
-    }, 5000)
+    }, 3000)
     return () => clearInterval(h)
   }, [])
 

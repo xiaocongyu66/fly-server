@@ -32,7 +32,7 @@ export function Models() {
 
   // always poll every 3s — lightweight GET, keeps progress bar live
   useEffect(() => {
-    const h = setInterval(refresh, 3000)
+    const h = setInterval(refresh, 1000)
     return () => clearInterval(h)
   }, [refresh])
 
@@ -81,11 +81,14 @@ export function Models() {
               </CardHeader>
               <CardContent className="space-y-2">
                 <div className="text-xs text-muted-foreground">
+                  <span className="font-mono">
+                  {busy ? `${pct}% · ` : ""}
                   {tier.downloaded > 0
-                    ? `${(tier.downloaded / 1e9).toFixed(2)} GB / ${(
-                        tier.total / 1e9
-                      ).toFixed(2)} GB`
-                    : `${(tier.total / 1e9).toFixed(2)} GB`}
+                    ? `${(tier.downloaded / 1e6).toFixed(1)} / ${(
+                        tier.total / 1e6
+                      ).toFixed(1)} MB`
+                    : `${(tier.total / 1e6).toFixed(1)} MB`}
+                </span>
                 </div>
                 {busy && (
                   <div className="h-2 rounded-full bg-muted overflow-hidden">

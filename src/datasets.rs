@@ -205,6 +205,10 @@ pub fn stream_to_file(
         .timeout(std::time::Duration::from_secs(3600))
         .call()
         .map_err(|e| format!("http: {e}"))?;
+    let content_length = resp
+        .header("Content-Length")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
     let mut reader = resp.into_reader();
     let mut file = std::fs::File::create(out_path).map_err(|e| format!("create: {e}"))?;
     let mut buf = [0u8; 64 * 1024];
@@ -220,5 +224,16 @@ pub fn stream_to_file(
         on_progress(got);
     }
     file.flush().ok();
+    let expected_size = if content_length > 0 {
+        content_length
+    } else {
+        expected
+    };
+    if expected_size > 0 && got < expected_size {
+        return Err(format!(
+            "truncated: got {} bytes, expected {}",
+            got, expected_size
+        ));
+    }
     Ok(got)
 }

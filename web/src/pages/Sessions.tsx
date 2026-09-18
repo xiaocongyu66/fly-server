@@ -47,7 +47,7 @@ export function Sessions() {
       } catch { /* ignore */ }
       refresh()
     })()
-    const h = setInterval(refresh, 5000)
+    const h = setInterval(refresh, 3000)
     return () => clearInterval(h)
   }, [refresh])
 
