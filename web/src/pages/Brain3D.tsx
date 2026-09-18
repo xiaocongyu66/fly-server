@@ -45,8 +45,8 @@ export function Brain3D() {
     setErrMsg("")
     try {
       const [nodesResp, edgesResp] = await Promise.all([
-        api.post("/v1/query", { limit: 400 }),
-        api.get("/v1/substrate/edges?limit=3000"),
+        api.post("/v1/query", { limit: 200 }),
+        api.get("/v1/substrate/edges?limit=100000"),
       ])
       const neurons: Neuron[] = nodesResp.neurons ?? []
       const rawEdges: [number, number][] = edgesResp.edges ?? []
@@ -93,20 +93,31 @@ export function Brain3D() {
       const controls = new OrbitControls(camera, renderer.domElement)
       controls.enableDamping = true
 
-      // nodes: one mesh per neuron (400 is cheap), colored by region hue
+      // nodes: THREE.Points — single draw call for all neurons
+      const positions = new Float32Array(neurons.length * 3)
+      const colors = new Float32Array(neurons.length * 3)
       const regionHue = new Map<string, number>()
       regions.forEach((r, i) => regionHue.set(r, (i * 0.618) % 1))
-      const sphereGeo = new THREE.SphereGeometry(1.6, 12, 12)
-      for (const n of neurons) {
+      neurons.forEach((n, i) => {
         const p = posById.get(n.root_id)!
+        positions[i * 3] = p.x
+        positions[i * 3 + 1] = p.y
+        positions[i * 3 + 2] = p.z
         const hue = regionHue.get(n.region || "unassigned") ?? 0.5
-        const mat = new THREE.MeshBasicMaterial({
-          color: new THREE.Color().setHSL(hue, 0.7, 0.6),
-        })
-        const mesh = new THREE.Mesh(sphereGeo, mat)
-        mesh.position.copy(p)
-        scene.add(mesh)
-      }
+        const c = new THREE.Color().setHSL(hue, 0.8, 0.65)
+        colors[i * 3] = c.r
+        colors[i * 3 + 1] = c.g
+        colors[i * 3 + 2] = c.b
+      })
+      const nodeGeo = new THREE.BufferGeometry()
+      nodeGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3))
+      nodeGeo.setAttribute("color", new THREE.BufferAttribute(colors, 3))
+      const nodeMat = new THREE.PointsMaterial({
+        size: 3.0,
+        vertexColors: true,
+        sizeAttenuation: true,
+      })
+      scene.add(new THREE.Points(nodeGeo, nodeMat))
 
       // edges
       if (lines.length) {
@@ -115,7 +126,7 @@ export function Brain3D() {
         const lineMat = new THREE.LineBasicMaterial({
           color: 0x4a6fa5,
           transparent: true,
-          opacity: 0.14,
+          opacity: 0.08,
         })
         scene.add(new THREE.LineSegments(lineGeo, lineMat))
       }

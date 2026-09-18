@@ -11,7 +11,7 @@ pub mod snapshot;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::engine::{Engine, EngineConfig, TickReport};
 use crate::error::{ApiError, ApiResult};
@@ -50,7 +50,7 @@ pub struct SessionState {
 pub struct SessionManager {
     substrate: Arc<Substrate>,
     substrate_id: String,
-    engine_cfg: EngineConfig,
+    engine_cfg: RwLock<EngineConfig>,
     sessions: Mutex<HashMap<String, SessionState>>,
     snapshots: Mutex<snapshot::SnapshotStore>,
     snapshot_every: u64,
@@ -64,11 +64,11 @@ impl SessionManager {
         Self {
             substrate,
             substrate_id,
-            engine_cfg,
+            engine_cfg: RwLock::new(engine_cfg),
             sessions: Mutex::new(HashMap::new()),
             snapshots: Mutex::new(snapshot::SnapshotStore::new(8)),
             snapshot_every: 100,
-            session_ttl: std::time::Duration::from_secs(30 * 60),
+            session_ttl: std::time::Duration::from_secs(5 * 60),
             max_sessions: 50,
             max_items_per_session: 10_000,
         }
@@ -161,6 +161,33 @@ impl SessionManager {
         serde_json::json!({"count": edges.len(), "edges": edges})
     }
 
+    /// Update engine config for all future ticks on all sessions.
+    /// Only runtime-adjustable fields are modified.
+    pub fn update_engine_config(&self, new_cfg: &crate::engine::EngineConfig) {
+        {
+            let mut cfg = self.engine_cfg.write().unwrap();
+            cfg.dt_ms = new_cfg.dt_ms;
+            cfg.use_simd = new_cfg.use_simd;
+            cfg.n_threads = new_cfg.n_threads.max(1);
+            cfg.weight_scale = new_cfg.weight_scale;
+            cfg.input_gain = new_cfg.input_gain;
+            cfg.v_thresh = new_cfg.v_thresh;
+        }
+        let mut sessions = self.sessions.lock().unwrap();
+        for s in sessions.values_mut() {
+            s.engine.cfg.dt_ms = new_cfg.dt_ms;
+            s.engine.cfg.use_simd = new_cfg.use_simd;
+            s.engine.cfg.n_threads = new_cfg.n_threads.max(1);
+            s.engine.cfg.weight_scale = new_cfg.weight_scale;
+            s.engine.cfg.input_gain = new_cfg.input_gain;
+            s.engine.cfg.v_thresh = new_cfg.v_thresh;
+        }
+    }
+
+    pub fn get_engine_config(&self) -> crate::engine::EngineConfig {
+        self.engine_cfg.read().unwrap().clone()
+    }
+
     pub fn session_count(&self) -> usize {
         self.sessions.lock().unwrap().len()
     }
@@ -190,8 +217,8 @@ impl SessionManager {
             unix_nanos(),
             SESSION_COUNTER.fetch_add(1, Ordering::Relaxed)
         );
-        let dt_ms = req.dt_ms.unwrap_or(self.engine_cfg.dt_ms);
-        let mut cfg = self.engine_cfg.clone();
+        let dt_ms = req.dt_ms.unwrap_or(self.engine_cfg.read().unwrap().dt_ms);
+        let mut cfg = self.engine_cfg.read().unwrap().clone();
         cfg.dt_ms = dt_ms;
         let engine = Engine::new(self.substrate.clone(), cfg);
         let state = SessionState {
@@ -338,7 +365,7 @@ impl SessionManager {
 
     pub fn step(&self, id: &str, req: StepRequest) -> ApiResult<StepResponse> {
         let steps = req.steps.clamp(1, 10_000);
-        let v_thresh = self.engine_cfg.v_thresh;
+        let v_thresh = self.engine_cfg.read().unwrap().v_thresh;
         let snapshot_every = self.snapshot_every;
         let substrate = self.substrate.clone();
         let mut sessions = self.sessions.lock().unwrap();

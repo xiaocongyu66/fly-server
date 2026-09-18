@@ -37,7 +37,7 @@ pub fn run_server(
     host: &str,
 ) -> std::io::Result<()> {
     let mgr = Arc::new(SessionManager::new(substrate, substrate_id, engine_cfg));
-    mgr.start_gc_thread(std::time::Duration::from_secs(60));
+    mgr.start_gc_thread(std::time::Duration::from_secs(5));
     http::serve(host, port, move |req| {
         if let Some(dist) = &admin_dist {
             if req.method == "GET" && !req.path.starts_with("/v1/") && req.path != "/health" {
@@ -180,6 +180,13 @@ fn route_authed(
                 "keys": admin.list_keys(),
             })),
             ("GET", Some("datasets"), None, _) => json_ok(datasets.list()),
+            ("GET", Some("settings"), None, _) => json_ok(mgr.get_engine_config()),
+            ("POST", Some("settings"), None, _) => {
+                with_body(req, |b: crate::engine::EngineConfig| {
+                    mgr.update_engine_config(&b);
+                    Ok(mgr.get_engine_config())
+                })
+            }
             ("GET", Some("memory"), None, _) => {
                 let sessions = mgr.session_count();
                 let datasets_count = 3;
