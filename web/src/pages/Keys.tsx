@@ -63,6 +63,16 @@ export function Keys() {
     setCreating(false)
   }
 
+  async function deleteKey(id: string) {
+    setErr("")
+    try {
+      await api.del(`/v1/admin/keys/${id}`)
+      refresh()
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+
   async function toggleKey(id: string, enable: boolean) {
     setErr("")
     try {
@@ -171,6 +181,14 @@ export function Keys() {
                       onClick={() => toggleKey(id, !enabled)}
                     >
                       {enabled ? t("keys.disable") : t("keys.enable")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-700 h-7 px-2"
+                      onClick={() => deleteKey(id)}
+                    >
+                      {t("keys.delete")}
                     </Button>
                   </TableCell>
                 </TableRow>

@@ -86,6 +86,13 @@ impl AdminStore {
                     ticks INTEGER NOT NULL DEFAULT 0,
                     sessions_created INTEGER NOT NULL DEFAULT 0
                 );
+                CREATE TABLE IF NOT EXISTS rate_windows (
+                    key_id TEXT NOT NULL,
+                    minute INTEGER NOT NULL,
+                    requests INTEGER NOT NULL DEFAULT 0,
+                    ticks INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (key_id, minute)
+                );
         ",
         )
         .expect("create tables fly.db");
@@ -253,6 +260,68 @@ impl AdminStore {
             return Some(("admin".into(), None));
         }
         self.verify_key(bearer).map(|id| ("key".into(), Some(id)))
+    }
+
+    /// Enforce per-key limits: RPM/TPM (per-minute sliding window via the
+    /// minute-bucket table) and lifetime tick budget. Returns an ApiError
+    /// when a limit is exceeded, None when the request may proceed.
+    pub fn check_rate_limit(&self, key_id: &str) -> Option<crate::error::ApiError> {
+        let conn = self.conn.lock().unwrap();
+        // fetch limits + usage + window counters
+        let row = conn
+            .query_row(
+                "SELECT k.rpm_limit, k.tpm_limit, k.tick_budget,
+                        COALESCE(u.ticks,0)
+                 FROM api_keys k LEFT JOIN usage u ON u.key_id = k.id
+                 WHERE k.id = ?1",
+                rusqlite::params![key_id],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)? as u64,
+                        r.get::<_, i64>(1)? as u64,
+                        r.get::<_, i64>(2)? as u64,
+                        r.get::<_, i64>(3)? as u64,
+                    ))
+                },
+            )
+            .ok()?;
+        let (rpm, tpm, budget, total_ticks) = row;
+
+        // minute window counters
+        let now_min = (now_secs() / 60) as i64;
+        let (req_win, tick_win) = conn
+            .query_row(
+                "SELECT COALESCE(requests,0), COALESCE(ticks,0) FROM rate_windows WHERE key_id=?1 AND minute=?2",
+                rusqlite::params![key_id, now_min],
+                |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64)),
+            )
+            .unwrap_or((0, 0));
+
+        if rpm > 0 && req_win >= rpm {
+            return Some(crate::error::ApiError {
+                err_type: "rate_limit_error",
+                code: "rpm_exceeded",
+                message: format!("RPM limit {rpm} exceeded for key {key_id}"),
+                param: None,
+            });
+        }
+        if tpm > 0 && tick_win >= tpm {
+            return Some(crate::error::ApiError {
+                err_type: "rate_limit_error",
+                code: "tpm_exceeded",
+                message: format!("TPM limit {tpm} exceeded for key {key_id}"),
+                param: None,
+            });
+        }
+        if budget > 0 && total_ticks >= budget {
+            return Some(crate::error::ApiError {
+                err_type: "insufficient_quota",
+                code: "tick_budget_exhausted",
+                message: format!("lifetime tick budget {budget} exhausted for key {key_id}"),
+                param: None,
+            });
+        }
+        None
     }
 
     pub fn record_usage(

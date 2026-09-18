@@ -194,6 +194,52 @@ impl SessionManager {
         self.engine_cfg.read().unwrap().clone()
     }
 
+    /// OpenAI-style stateless call: create session -> observe input ->
+    /// step -> read actions -> delete session. User never sees session ids.
+    /// Returns actions (the "assistant response" of the fly brain).
+    pub fn chat_simulate(
+        &self,
+        target: &crate::types::NeuronSelector,
+        current: f32,
+        steps: u32,
+    ) -> ApiResult<serde_json::Value> {
+        let sess = self.create(crate::types::CreateSessionRequest {
+            substrate: String::new(),
+            adapters: Vec::new(),
+            dt_ms: None,
+            metadata: [("kind".to_string(), "chat_simulate".to_string())]
+                .into_iter()
+                .collect(),
+        })?;
+        let sid = sess.id;
+        let result = (|| -> ApiResult<serde_json::Value> {
+            self.observe(
+                &sid,
+                crate::types::ObserveRequest {
+                    modality: "visual".into(),
+                    target: target.clone(),
+                    current,
+                    duration_ticks: 1,
+                },
+            )?;
+            let resp = self.step(
+                &sid,
+                crate::types::StepRequest {
+                    steps: steps.clamp(1, 10_000),
+                },
+            )?;
+            Ok(serde_json::json!({
+                "object": "simulation",
+                "spikes": resp.n_spikes,
+                "ticks": resp.tick,
+                "actions": resp.actions,
+            }))
+        })();
+        // always clean up the internal session
+        let _ = self.delete(&sid);
+        result
+    }
+
     pub fn session_count(&self) -> usize {
         self.sessions.lock().unwrap().len()
     }

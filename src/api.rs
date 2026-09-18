@@ -224,7 +224,12 @@ fn route_authed(
         };
     }
 
-    // billing: count the request for API keys
+    // billing + rate limiting: check RPM/TPM/budget for API keys
+    if let Some(kid) = key_id {
+        if let Some(limit_err) = admin.check_rate_limit(kid) {
+            return json_err(&limit_err);
+        }
+    }
     admin.record_usage(key_id.as_deref(), 1, 0, 0);
 
     match (req.method.as_str(), segs) {
@@ -248,6 +253,33 @@ fn route_authed(
                 match crate::llm::parse_via_llm(llm, &q, &regions) {
                     Ok(sel_json) => json_ok(sel_json),
                     Err(e) => json_err(&ApiError::invalid_request("llm_error", e, None)),
+                }
+            }
+            Err(resp) => resp,
+        },
+
+        ("POST", ["v1", "chat", "simulate"]) => match parse_body::<serde_json::Value>(req) {
+            Ok(b) => {
+                let target = match b
+                    .get("target")
+                    .cloned()
+                    .map(serde_json::from_value::<crate::types::NeuronSelector>)
+                    .transpose()
+                {
+                    Ok(t) => t.unwrap_or_default(),
+                    Err(e) => {
+                        return json_err(&ApiError::invalid_request(
+                            "bad_target",
+                            e.to_string(),
+                            Some("target"),
+                        ))
+                    }
+                };
+                let current = b.get("current").and_then(|v| v.as_f64()).unwrap_or(30.0) as f32;
+                let steps = b.get("steps").and_then(|v| v.as_u64()).unwrap_or(100) as u32;
+                match mgr.chat_simulate(&target, current, steps) {
+                    Ok(v) => json_ok(v),
+                    Err(e) => json_err(&e),
                 }
             }
             Err(resp) => resp,

@@ -87,7 +87,19 @@ const EN: Dict = {
   "b3d.hint": "Click Render to draw a sample of the loaded fly brain (400 neurons, 3000 synapses). Drag to rotate, scroll to zoom.",
   "b3d.nodes": "nodes",
   "b3d.edges": "edges",
-  "b3d.local_badge": "100% local — substrate data rendered from your own fly-server, no external calls",
+    "b3d.local_badge": "100% local — substrate data rendered from your own fly-server, no external calls",
+  "b3d.no_model": "No brain model loaded. Go to Model downloads, get the Lite tier, then restart the server.",
+  "settings.title": "Settings",
+  "settings.engine": "Engine (applies to all sessions immediately)",
+  "settings.simd": "SIMD acceleration (NEON)",
+  "settings.threads": "Worker threads",
+  "settings.dt": "Timestep dt (ms)",
+  "settings.weight": "Weight scale",
+  "settings.thresh": "Spike threshold (mV)",
+  "settings.save": "Save",
+  "settings.saved": "Saved",
+  "settings.hint": "threads=1 keeps bit-exact replays; >1 enables parallel phases (faster but rounding may drift).",
+  "keys.delete": "delete",
 }
 
 const ZH: Dict = {
@@ -171,7 +183,19 @@ const ZH: Dict = {
   "b3d.hint": "点击渲染绘制已加载果蝇脑的采样（400 神经元 / 3000 突触）。拖拽旋转，滚轮缩放。",
   "b3d.nodes": "神经元",
   "b3d.edges": "突触",
-  "b3d.local_badge": "100% 本地 —— 数据渲染自你自己的 fly-server，无任何外部调用",
+    "b3d.local_badge": "100% 本地 —— 数据渲染自你自己的 fly-server，无任何外部调用",
+  "b3d.no_model": "尚未加载脑模型。请前往「模型下载」获取 Lite 档，然后重启服务器。",
+  "settings.title": "设置",
+  "settings.engine": "引擎（立即作用于所有会话）",
+  "settings.simd": "SIMD 加速（NEON）",
+  "settings.threads": "工作线程数",
+  "settings.dt": "时间步长 dt (ms)",
+  "settings.weight": "权重缩放",
+  "settings.thresh": "发放阈值 (mV)",
+  "settings.save": "保存",
+  "settings.saved": "已保存",
+  "settings.hint": "threads=1 保持逐位精确重放；>1 启用并行阶段（更快但可能有舍入漂移）。",
+  "keys.delete": "删除",
 }
 
 const DICTS: Record<Lang, Dict> = { en: EN, zh: ZH }

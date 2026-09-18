@@ -43,6 +43,20 @@ export function Brain3D() {
   async function render() {
     setStatus("loading")
     setErrMsg("")
+    // guide: require a loaded substrate (server reports via /v1/models)
+    try {
+      const m = await api.get("/v1/models")
+      const n = m.data?.[0]?.n_neurons ?? 0
+      if (!n || n === 0) {
+        setStatus("error")
+        setErrMsg(t("b3d.no_model"))
+        return
+      }
+    } catch (e: any) {
+      setStatus("error")
+      setErrMsg(e.message)
+      return
+    }
     try {
       const [nodesResp, edgesResp] = await Promise.all([
         api.post("/v1/query", {}),
