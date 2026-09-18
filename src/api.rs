@@ -46,6 +46,7 @@ pub fn run_server(
             }
         }
     }
+    let substrates_dir = data_dir.join("substrates");
     let mgr = Arc::new(SessionManager::new(substrate, substrate_id, engine_cfg));
     mgr.start_gc_thread(std::time::Duration::from_secs(5));
     http::serve(host, port, move |req| {
@@ -56,7 +57,15 @@ pub fn run_server(
                 }
             }
         }
-        route(&mgr, &admin, &datasets, &llm, &settings_path, req)
+        route(
+            &mgr,
+            &admin,
+            &datasets,
+            &llm,
+            &settings_path,
+            &substrates_dir,
+            req,
+        )
     })
 }
 
@@ -79,6 +88,7 @@ fn route(
     datasets: &Arc<crate::datasets::DatasetStore>,
     llm: &crate::llm::LlmConfig,
     settings_path: &std::path::Path,
+    substrates_dir: &std::path::Path,
     req: &HttpRequest,
 ) -> HttpResponse {
     let segs: Vec<&str> = req
@@ -131,6 +141,7 @@ fn route(
         datasets,
         llm,
         settings_path,
+        substrates_dir,
         role.as_str(),
         &key_id,
         req,
@@ -146,6 +157,7 @@ fn route_authed(
     datasets: &Arc<crate::datasets::DatasetStore>,
     llm: &crate::llm::LlmConfig,
     settings_path: &std::path::Path,
+    substrates_dir: &std::path::Path,
     role: &str,
     key_id: &Option<String>,
     req: &HttpRequest,
@@ -214,7 +226,7 @@ fn route_authed(
             ("POST", Some("substrate"), Some(rel_path), Some("activate")) => {
                 // hot-swap to a .flybin under data_dir/substrates/
                 let rel = rel_path.replace("..", "");
-                let full = std::path::PathBuf::from("substrates").join(&rel);
+                let full = substrates_dir.join(&rel);
                 match crate::substrate::load(&full) {
                     Ok(sub) => {
                         let id = full
@@ -521,6 +533,7 @@ mod tests {
             &datasets,
             &llm,
             std::path::Path::new("/tmp"),
+            std::path::Path::new("/tmp/subs"),
             &req("GET", "/health", ""),
         );
         assert_eq!(r.status, 200);
@@ -535,6 +548,7 @@ mod tests {
             &datasets,
             &llm,
             std::path::Path::new("/tmp"),
+            std::path::Path::new("/tmp/subs"),
             &req,
         );
         let Body::Bytes(b) = r.body else { panic!() };
@@ -569,6 +583,7 @@ mod tests {
                 &datasets,
                 &llm,
                 std::path::Path::new("/tmp"),
+                std::path::Path::new("/tmp/subs"),
                 &rq,
             )
         };
@@ -589,6 +604,7 @@ mod tests {
                 &datasets,
                 &llm,
                 std::path::Path::new("/tmp"),
+                std::path::Path::new("/tmp/subs"),
                 &req("GET", "/nope", "")
             )
             .status,
