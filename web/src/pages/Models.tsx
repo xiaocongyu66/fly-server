@@ -71,8 +71,11 @@ export function Models() {
 
   async function activate(tier: string) {
     setErr("")
+    // backend path: /v1/admin/substrate/<flybin filename>/activate
+    // lite tier compiles to lite.flybin; others use <tier>.flybin
+    const flybin = tier === "lite" ? "lite.flybin" : `${tier}.flybin`
     try {
-      const v = await api.post(`/v1/admin/datasets/${tier}/activate`, {})
+      const v = await api.post(`/v1/admin/substrate/${flybin}/activate`, {})
       setLoadedId(v.activated ?? "")
     } catch (e: any) {
       setErr(e.message)
@@ -102,9 +105,14 @@ export function Models() {
     return `models.status.${s}`
   }
 
-  const isLoadedSubstrate = (tier: string) =>
-    loadedId === "substrate" && tier === "lite" // dev substrate came from FlyWire = lite
-      || loadedId === "lite"
+  const isLoadedSubstrate = (tier: string) => {
+    // the loaded model id maps to its tier: "lite" (compiled from lite tier),
+    // "substrate"/"sub_u8"/"sub_f32" (dev builds of FlyWire = lite tier)
+    if (loadedId === "lite") return tier === "lite"
+    if (loadedId === "substrate" || loadedId === "sub_u8" || loadedId === "sub_f32")
+      return tier === "lite"
+    return false
+  }
 
   return (
     <div className="p-4 md:p-6 space-y-4">
