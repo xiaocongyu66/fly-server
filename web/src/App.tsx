@@ -2,7 +2,6 @@ import { useEffect, useState } from "react"
 import { token, clearToken } from "@/api"
 import { Login } from "@/pages/Login"
 import { Dashboard } from "@/pages/Dashboard"
-import { Sessions } from "@/pages/Sessions"
 import { Activity } from "@/pages/Activity"
 import { Keys } from "@/pages/Keys"
 import { Models } from "@/pages/Models"
@@ -18,14 +17,13 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
-import { Menu, LayoutDashboard, Boxes, Activity as ActivityIcon, KeyRound, Download, Languages, Search, Brain, Settings as SettingsIcon } from "lucide-react"
+import { Menu, LayoutDashboard, Activity as ActivityIcon, KeyRound, Download, Languages, Search, Brain, Settings as SettingsIcon } from "lucide-react"
 import { useI18n } from "@/i18n"
 
-type Page = "dashboard" | "sessions" | "activity" | "keys" | "models" | "query" | "brain3d" | "settings"
+type Page = "dashboard" | "activity" | "keys" | "models" | "query" | "brain3d" | "settings"
 
 const NAV: { key: Page; label: string; icon: typeof Menu }[] = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { key: "sessions", label: "Sessions", icon: Boxes },
   { key: "activity", label: "Live activity", icon: ActivityIcon },
   { key: "keys", label: "Keys & billing", icon: KeyRound },
   { key: "models", label: "Model downloads", icon: Download },
@@ -68,7 +66,6 @@ export default function App() {
 
   const labels: Record<Page, string> = {
     dashboard: t("nav.dashboard"),
-    sessions: t("nav.sessions"),
     activity: t("nav.activity"),
     keys: t("nav.keys"),
     models: t("nav.models"),
@@ -115,7 +112,6 @@ export default function App() {
 
   const content =
     page === "dashboard" ? <Dashboard />
-    : page === "sessions" ? <Sessions />
     : page === "activity" ? <Activity />
     : page === "models" ? <Models />
     : page === "query" ? <Query />
