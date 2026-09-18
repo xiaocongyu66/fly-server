@@ -24,9 +24,6 @@ pub struct DatasetDef {
     pub files: &'static [(&'static str, &'static str)],
 }
 
-const MALECNS_BASE: &str =
-    "https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome";
-
 pub const DATASETS: &[DatasetDef] = &[
     DatasetDef {
         tier: "lite",
