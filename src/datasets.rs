@@ -209,7 +209,12 @@ impl DatasetStore {
                 let out_path = out_dir.join(local_name);
                 let mut ok = false;
                 for attempt in 0..3 {
-                    match stream_to_file(url, &out_path, 0, &|got| {
+                    let file_expected = if files.len() > 1 {
+                        def.bytes / files.len() as u64
+                    } else {
+                        def.bytes
+                    };
+                    match stream_to_file(url, &out_path, file_expected, &|got| {
                         store.update_progress(tier_s.as_str(), downloaded_total + got)
                     }) {
                         Ok(bytes) => {
