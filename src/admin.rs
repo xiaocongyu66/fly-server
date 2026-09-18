@@ -23,6 +23,10 @@ pub struct ApiKey {
     pub name: String,
     pub created_at: u64,
     pub enabled: bool,
+    /// Rate limits: requests per minute, ticks per minute, lifetime tick budget
+    pub rpm_limit: u64, // 0 = unlimited
+    pub tpm_limit: u64,   // ticks per minute; 0 = unlimited
+    pub tick_budget: u64, // lifetime tick budget; 0 = unlimited
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -39,6 +43,9 @@ pub struct KeyView {
     pub created_at: u64,
     pub enabled: bool,
     pub usage: KeyUsage,
+    pub rpm_limit: u64,
+    pub tpm_limit: u64,
+    pub tick_budget: u64,
 }
 
 pub struct AdminStore {
@@ -78,7 +85,10 @@ impl AdminStore {
                     requests INTEGER NOT NULL DEFAULT 0,
                     ticks INTEGER NOT NULL DEFAULT 0,
                     sessions_created INTEGER NOT NULL DEFAULT 0
-                );",
+                );
+                ALTER TABLE api_keys ADD COLUMN rpm_limit INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE api_keys ADD COLUMN tpm_limit INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE api_keys ADD COLUMN tick_budget INTEGER NOT NULL DEFAULT 0;",
         )
         .expect("migrate fly.db");
 
@@ -125,20 +135,29 @@ impl AdminStore {
         tokens.contains_key(token)
     }
 
-    pub fn create_key(&self, name: &str) -> ApiKey {
+    pub fn create_key(
+        &self,
+        name: &str,
+        rpm_limit: u64,
+        tpm_limit: u64,
+        tick_budget: u64,
+    ) -> ApiKey {
         let key = ApiKey {
             id: format!("key_{}", rand_hex(4)),
             secret: format!("fly_sk_{}", rand_hex(24)),
             name: name.to_string(),
             created_at: now_secs(),
             enabled: true,
+            rpm_limit,
+            tpm_limit,
+            tick_budget,
         };
         self.conn
             .lock()
             .unwrap()
             .execute(
-                "INSERT INTO api_keys (id, secret, name, created_at, enabled) VALUES (?1, ?2, ?3, ?4, 1)",
-                rusqlite::params![key.id, key.secret, key.name, key.created_at as i64],
+                "INSERT INTO api_keys (id, secret, name, created_at, enabled, rpm_limit, tpm_limit, tick_budget) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7)",
+                rusqlite::params![key.id, key.secret, key.name, key.created_at as i64, key.rpm_limit as i64, key.tpm_limit as i64, key.tick_budget as i64],
             )
             .ok();
         self.conn
@@ -157,7 +176,8 @@ impl AdminStore {
         let mut stmt = conn
             .prepare(
                 "SELECT k.id, k.name, k.created_at, k.enabled,
-                        COALESCE(u.requests,0), COALESCE(u.ticks,0), COALESCE(u.sessions_created,0)
+                        COALESCE(u.requests,0), COALESCE(u.ticks,0), COALESCE(u.sessions_created,0),
+                        k.rpm_limit, k.tpm_limit, k.tick_budget
                  FROM api_keys k LEFT JOIN usage u ON u.key_id = k.id
                  ORDER BY k.created_at DESC",
             )
@@ -174,10 +194,26 @@ impl AdminStore {
                         ticks: row.get::<_, i64>(5)? as u64,
                         sessions_created: row.get::<_, i64>(6)? as u64,
                     },
+                    rpm_limit: row.get::<_, i64>(7)? as u64,
+                    tpm_limit: row.get::<_, i64>(8)? as u64,
+                    tick_budget: row.get::<_, i64>(9)? as u64,
                 })
             })
             .expect("list query map");
         rows.filter_map(|r| r.ok()).collect()
+    }
+
+    pub fn delete_key(&self, id: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        let ok = conn
+            .execute("DELETE FROM api_keys WHERE id = ?1", rusqlite::params![id])
+            .map(|n| n > 0)
+            .unwrap_or(false);
+        if ok {
+            conn.execute("DELETE FROM usage WHERE key_id = ?1", rusqlite::params![id])
+                .ok();
+        }
+        ok
     }
 
     pub fn set_key_enabled(&self, id: &str, enabled: bool) -> bool {

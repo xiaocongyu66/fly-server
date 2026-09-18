@@ -164,7 +164,10 @@ fn route_authed(
                         .and_then(|v| v.as_str())
                         .unwrap_or("default")
                         .to_string();
-                    json_ok(admin.create_key(&name))
+                    let rpm = b.get("rpm_limit").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let tpm = b.get("tpm_limit").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let budget = b.get("tick_budget").and_then(|v| v.as_u64()).unwrap_or(0);
+                    json_ok(admin.create_key(&name, rpm, tpm, budget))
                 }
                 Err(resp) => resp,
             },
@@ -175,6 +178,10 @@ fn route_authed(
                     false => json_err(&ApiError::not_found(format!("key `{id}` not found"))),
                 }
             }
+            ("DELETE", Some("keys"), Some(id), None) => match admin.delete_key(id) {
+                true => json_ok(serde_json::json!({"deleted": true, "id": id})),
+                false => json_err(&ApiError::not_found(format!("key `{id}` not found"))),
+            },
             ("GET", Some("usage"), None, _) => json_ok(serde_json::json!({
                 "total": admin.total_usage(),
                 "keys": admin.list_keys(),
@@ -444,7 +451,7 @@ mod tests {
         let llm = crate::llm::LlmConfig::default();
         let r = route(&mgr, &admin, &datasets, &llm, &req("GET", "/health", ""));
         assert_eq!(r.status, 200);
-        let key = admin.create_key("t");
+        let key = admin.create_key("t", 0, 0, 0);
         let mut req = req("GET", "/v1/models", "");
         req.headers
             .push(("authorization".into(), format!("Bearer {}", key.secret)));
@@ -470,7 +477,7 @@ mod tests {
             "pw",
             std::path::PathBuf::from("/tmp/test_keys2.json"),
         );
-        let key = admin.create_key("t");
+        let key = admin.create_key("t", 0, 0, 0);
         let llm = crate::llm::LlmConfig::default();
         let authed = |method: &str, path: &str, body: &str| {
             let mut rq = req(method, path, body);

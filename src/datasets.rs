@@ -381,6 +381,65 @@ impl DatasetStore {
     }
 }
 
+/// Download a URL to a file, resuming from an existing `.part` file
+/// using HTTP Range requests. Appends to the file when resuming.
+pub fn download_with_resume(
+    url: &str,
+    part_path: &std::path::Path,
+    resume_from: u64,
+    on_progress: &dyn Fn(u64),
+) -> Result<u64, String> {
+    let mut req = ureq::get(url).timeout(std::time::Duration::from_secs(3600));
+    if resume_from > 0 {
+        req = req.set("Range", &format!("bytes={}-", resume_from));
+    }
+    let resp = req.call().map_err(|e| format!("http: {e}"))?;
+    let status = resp.status();
+    let is_resume = status == 206 && resume_from > 0;
+    let content_length = resp
+        .header("Content-Length")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    let mut reader = resp.into_reader();
+    let mut file = if is_resume {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(part_path)
+            .map_err(|e| format!("open for append: {e}"))?
+    } else {
+        std::fs::File::create(part_path).map_err(|e| format!("create: {e}"))?
+    };
+    let start_offset = if is_resume { resume_from } else { 0 };
+    let mut buf = [0u8; 64 * 1024];
+    let mut got = 0u64;
+    loop {
+        let n = reader.read(&mut buf).map_err(|e| format!("read: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n])
+            .map_err(|e| format!("write: {e}"))?;
+        got += n as u64;
+        on_progress(start_offset + got);
+    }
+    file.flush().ok();
+    if content_length > 0 {
+        let expected_total = if is_resume {
+            resume_from + content_length
+        } else {
+            content_length
+        };
+        let actual = part_path.metadata().map(|m| m.len()).unwrap_or(0);
+        if actual < expected_total {
+            return Err(format!(
+                "truncated: got {}, expected {}",
+                actual, expected_total
+            ));
+        }
+    }
+    Ok(got)
+}
+
 /// One-shot download to a path (no progress callback) — bootstrap path.
 pub fn download_to(url: &str, out_path: &std::path::Path) -> Result<u64, String> {
     stream_to_file(url, out_path, 0, &|_| {})
