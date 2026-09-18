@@ -37,6 +37,7 @@ pub fn run_server(
     host: &str,
 ) -> std::io::Result<()> {
     let mgr = Arc::new(SessionManager::new(substrate, substrate_id, engine_cfg));
+    mgr.start_gc_thread(std::time::Duration::from_secs(60));
     http::serve(host, port, move |req| {
         if let Some(dist) = &admin_dist {
             if req.method == "GET" && !req.path.starts_with("/v1/") && req.path != "/health" {
@@ -179,6 +180,16 @@ fn route_authed(
                 "keys": admin.list_keys(),
             })),
             ("GET", Some("datasets"), None, _) => json_ok(datasets.list()),
+            ("GET", Some("memory"), None, _) => {
+                let sessions = mgr.session_count();
+                let datasets_count = 3;
+                json_ok(serde_json::json!({
+                    "active_sessions": sessions,
+                    "max_sessions": 50,
+                    "session_ttl_secs": 1800,
+                    "dataset_tiers": datasets_count,
+                }))
+            }
             ("POST", Some("datasets"), Some(tier), Some("download")) => {
                 match datasets.start_download(tier) {
                     Ok(()) => json_ok(serde_json::json!({"tier": tier, "started": true})),

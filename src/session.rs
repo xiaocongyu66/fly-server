@@ -37,6 +37,7 @@ fn unix_nanos() -> u128 {
 pub struct SessionState {
     pub id: String,
     pub created_at: u64,
+    pub last_activity: std::time::Instant,
     pub substrate_id: String,
     pub dt_ms: f32,
     pub metadata: HashMap<String, String>,
@@ -53,6 +54,9 @@ pub struct SessionManager {
     sessions: Mutex<HashMap<String, SessionState>>,
     snapshots: Mutex<snapshot::SnapshotStore>,
     snapshot_every: u64,
+    pub session_ttl: std::time::Duration,
+    pub max_sessions: usize,
+    pub max_items_per_session: usize,
 }
 
 impl SessionManager {
@@ -64,7 +68,58 @@ impl SessionManager {
             sessions: Mutex::new(HashMap::new()),
             snapshots: Mutex::new(snapshot::SnapshotStore::new(8)),
             snapshot_every: 100,
+            session_ttl: std::time::Duration::from_secs(30 * 60),
+            max_sessions: 50,
+            max_items_per_session: 10_000,
         }
+    }
+
+    /// Remove sessions idle > TTL, then LRU-evict beyond max_sessions.
+    /// Returns number of sessions removed.
+    pub fn gc(&self) -> usize {
+        let mut sessions = self.sessions.lock().unwrap();
+        let now = std::time::Instant::now();
+        let ttl = self.session_ttl;
+
+        // pass 1: TTL-based removal
+        let expired: Vec<String> = sessions
+            .iter()
+            .filter(|(_, s)| now.duration_since(s.last_activity) > ttl)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &expired {
+            sessions.remove(id);
+        }
+
+        // pass 2: LRU eviction beyond max_sessions
+        let mut removed = expired.len();
+        while sessions.len() > self.max_sessions {
+            // find least-recently-active
+            let lru = sessions
+                .iter()
+                .min_by_key(|(_, s)| s.last_activity)
+                .map(|(id, _)| id.clone());
+            match lru {
+                Some(id) => {
+                    sessions.remove(&id);
+                    removed += 1;
+                }
+                None => break,
+            }
+        }
+        removed
+    }
+
+    /// Background GC thread — call once at server startup.
+    pub fn start_gc_thread(self: &Arc<Self>, interval: std::time::Duration) {
+        let store = Arc::clone(self);
+        std::thread::spawn(move || loop {
+            std::thread::sleep(interval);
+            let removed = store.gc();
+            if removed > 0 {
+                eprintln!("gc: removed {} expired sessions", removed);
+            }
+        });
     }
 
     pub fn models(&self) -> ModelsResponse {
@@ -106,6 +161,10 @@ impl SessionManager {
         serde_json::json!({"count": edges.len(), "edges": edges})
     }
 
+    pub fn session_count(&self) -> usize {
+        self.sessions.lock().unwrap().len()
+    }
+
     pub fn list(&self) -> Vec<SessionObject> {
         self.sessions
             .lock()
@@ -138,6 +197,7 @@ impl SessionManager {
         let state = SessionState {
             id: id.clone(),
             created_at: unix_secs(),
+            last_activity: std::time::Instant::now(),
             substrate_id: self.substrate_id.clone(),
             dt_ms,
             metadata: req.metadata,
@@ -271,7 +331,9 @@ impl SessionManager {
             "duration_ticks": req.duration_ticks,
             "n_neurons_stimulated": idx.len(),
         });
-        Ok(s.log.append(id, "observe", tick, body))
+        let item = s.log.append(id, "observe", tick, body);
+        s.log.cap(self.max_items_per_session);
+        Ok(item)
     }
 
     pub fn step(&self, id: &str, req: StepRequest) -> ApiResult<StepResponse> {

@@ -22,6 +22,13 @@ impl ItemLog {
         }
     }
 
+    pub fn cap(&mut self, max: usize) {
+        if self.items.len() > max {
+            let drop = self.items.len() - max;
+            self.items.drain(..drop);
+        }
+    }
+
     pub fn append(
         &mut self,
         session_id: &str,
