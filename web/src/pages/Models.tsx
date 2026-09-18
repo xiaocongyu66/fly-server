@@ -17,15 +17,10 @@ export function Models() {
   const { t } = useI18n()
   const [tiers, setTiers] = useState<Tier[]>([])
   const [err, setErr] = useState("")
-  const [polling, setPolling] = useState(false)
-
   const refresh = useCallback(async () => {
     try {
       const v = await api.get("/v1/admin/datasets/status")
-      const list: Tier[] = v.tiers ?? []
-      setTiers(list)
-      const anyDownloading = list.some((x) => x.status === "downloading")
-      setPolling(anyDownloading)
+      setTiers(v.tiers ?? [])
     } catch (e: any) {
       setErr(e.message)
     }
@@ -35,21 +30,28 @@ export function Models() {
     refresh()
   }, [refresh])
 
-  // poll while any tier is downloading
+  // always poll every 3s — lightweight GET, keeps progress bar live
   useEffect(() => {
-    if (!polling) return
-    const h = setInterval(refresh, 2000)
+    const h = setInterval(refresh, 3000)
     return () => clearInterval(h)
-  }, [polling, refresh])
+  }, [refresh])
 
   async function download(tier: string) {
     setErr("")
+    // optimistic: show downloading immediately without waiting for poll
+    setTiers((prev) =>
+      prev.map((x) =>
+        x.tier === tier
+          ? { ...x, status: "downloading", downloaded: 0, error: null, hint: null }
+          : x
+      )
+    )
     try {
       await api.post(`/v1/admin/datasets/${tier}/download`, {})
-      setPolling(true)
       refresh()
     } catch (e: any) {
       setErr(e.message)
+      refresh()
     }
   }
 
