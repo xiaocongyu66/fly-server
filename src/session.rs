@@ -147,7 +147,7 @@ impl SessionManager {
     pub fn query(&self, sel: &crate::types::NeuronSelector) -> serde_json::Value {
         let matched = self.substrate.select(sel);
         let count = matched.len() as u64;
-        let limit = (sel.limit.unwrap_or(25).min(1000) as usize).min(matched.len());
+        let limit = (sel.limit.unwrap_or(200000) as usize).min(matched.len());
         // even stride sampling when the match set exceeds the limit
         let stride = matched.len().checked_div(limit).unwrap_or(1);
         let picked: Vec<u32> = (0..limit).map(|i| matched[i * stride]).collect();

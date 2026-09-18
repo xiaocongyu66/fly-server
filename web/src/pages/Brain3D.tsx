@@ -45,7 +45,7 @@ export function Brain3D() {
     setErrMsg("")
     try {
       const [nodesResp, edgesResp] = await Promise.all([
-        api.post("/v1/query", { limit: 200 }),
+        api.post("/v1/query", {}),
         api.get("/v1/substrate/edges?limit=100000"),
       ])
       const neurons: Neuron[] = nodesResp.neurons ?? []
@@ -113,7 +113,7 @@ export function Brain3D() {
       nodeGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3))
       nodeGeo.setAttribute("color", new THREE.BufferAttribute(colors, 3))
       const nodeMat = new THREE.PointsMaterial({
-        size: 3.0,
+        size: 1.2,
         vertexColors: true,
         sizeAttenuation: true,
       })
