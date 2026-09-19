@@ -23,14 +23,14 @@ const TIER_DESC: Record<string, { name: string; size: string; desc: string; neur
   },
   standard: {
     name: "MaleCNS Standard (male CNS weights)",
-    size: "~1 GB",
-    desc: "Neuron-to-neuron connectivity weights for the male CNS. Research data — needs feather ingest (roadmap).",
+    size: "~1.1 GB",
+    desc: "Neuron-to-neuron connectivity weights for the male CNS, with cell-type annotations and neurotransmitter predictions. Compiles on activation.",
     neurons: "166,700 neurons / 125M synapses",
   },
   full: {
     name: "MaleCNS Full (synapse-level partners)",
     size: "~3 GB",
-    desc: "Full synapse-level partner list. Research data — needs feather ingest (roadmap).",
+    desc: "Full synapse-level partner list (one row per synapse). Heavier compile; same neurons as standard with exact synapse counts.",
     neurons: "166,700 neurons / 125M synapses",
   },
 }
@@ -71,14 +71,22 @@ export function Models() {
 
   async function activate(tier: string) {
     setErr("")
-    // backend path: /v1/admin/substrate/<flybin filename>/activate
-    // lite tier compiles to lite.flybin; others use <tier>.flybin
-    const flybin = tier === "lite" ? "lite.flybin" : `${tier}.flybin`
-    try {
-      const v = await api.post(`/v1/admin/substrate/${flybin}/activate`, {})
-      setLoadedId(v.activated ?? "")
-    } catch (e: any) {
-      setErr(e.message)
+    // standard/full compile their feather → .flybin in the background and
+    // auto-activate when done (status flips compiled within ~1s polling);
+    // lite is pre-compiled, so it hot-swaps immediately.
+    if (tier === "lite") {
+      try {
+        const v = await api.post("/v1/admin/substrate/lite.flybin/activate", {})
+        setLoadedId(v.activated ?? "")
+      } catch (e: any) {
+        setErr(e.message)
+      }
+    } else {
+      try {
+        await api.post(`/v1/admin/datasets/${tier}/activate`, {})
+      } catch (e: any) {
+        setErr(e.message)
+      }
     }
     refresh()
   }
@@ -106,12 +114,11 @@ export function Models() {
   }
 
   const isLoadedSubstrate = (tier: string) => {
-    // the loaded model id maps to its tier: "lite" (compiled from lite tier),
-    // "substrate"/"sub_u8"/"sub_f32" (dev builds of FlyWire = lite tier)
-    if (loadedId === "lite") return tier === "lite"
-    if (loadedId === "substrate" || loadedId === "sub_u8" || loadedId === "sub_f32")
+    // dev builds "substrate"/"sub_u8"/"sub_f32" are FlyWire (= lite tier);
+    // otherwise the loaded id equals the tier name (lite/standard/full)
+    if (loadedId === "lite" || loadedId === "substrate" || loadedId === "sub_u8" || loadedId === "sub_f32")
       return tier === "lite"
-    return false
+    return loadedId === tier
   }
 
   return (
@@ -141,7 +148,7 @@ export function Models() {
         {tiers.map((tier) => {
           const pct =
             tier.total > 0 ? Math.min(100, Math.round((tier.downloaded / tier.total) * 100)) : 0
-          const busy = tier.status === "downloading"
+          const busy = tier.status === "downloading" || tier.status === "compiling"
           const compiled = tier.status === "compiled"
           const info = TIER_DESC[tier.tier] ?? { name: tier.tier, size: "", desc: "", neurons: "" }
           return (
@@ -182,6 +189,11 @@ export function Models() {
                   <Badge variant="outline" className="w-full justify-center">
                     {t("models.in_use")}
                   </Badge>
+                )}
+                {tier.status === "compiling" && (
+                  <div className="text-[10px] text-muted-foreground">
+                    {t("models.activating_hint")}
+                  </div>
                 )}
                 {!isLoadedSubstrate(tier.tier) && !busy && (
                   <Button

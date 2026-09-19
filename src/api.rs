@@ -24,6 +24,109 @@ struct LoginRequest {
     password: String,
 }
 
+/// POST /v1/admin/datasets/{tier}/activate
+///
+/// Hot-swap to a compiled `.flybin` when one exists; otherwise compile the
+/// tier's feather in a background thread and auto-activate when done. The
+/// compile slot is claimed atomically, so repeated clicks are idempotent —
+/// status flips `downloading → compiling → compiled` in the 1s status poll.
+fn activate_tier(
+    mgr: &Arc<SessionManager>,
+    datasets: &Arc<crate::datasets::DatasetStore>,
+    tier: &str,
+    substrates_dir: &std::path::Path,
+) -> HttpResponse {
+    let flybin = substrates_dir.join(format!("{tier}.flybin"));
+    if flybin.exists() {
+        return match crate::substrate::load(&flybin) {
+            Ok(sub) => {
+                let cleared = mgr.reload_substrate(Arc::new(sub), tier.to_string());
+                json_ok(serde_json::json!({
+                    "activated": tier,
+                    "sessions_cleared": cleared,
+                }))
+            }
+            Err(e) => json_err(&ApiError::invalid_request(
+                "substrate_load_error",
+                e.to_string(),
+                None,
+            )),
+        };
+    }
+
+    // no compiled substrate yet — locate the feather input. The full tier
+    // is a per-synapse partner list (no weight column); both tiers share
+    // the same MaleCNS body ids, so standard's annotation files enrich both.
+    let (weights_name, pre_col, post_col, weight_col) = match tier {
+        "standard" => (
+            "connectome_weights.feather",
+            "body_pre",
+            "body_post",
+            Some("weight"),
+        ),
+        "full" => ("syn_partners.feather", "body_pre", "body_post", None),
+        _ => {
+            return json_err(&ApiError::invalid_request(
+                "unknown_tier",
+                format!(
+                    "tier `{tier}` cannot be activated (lite uses substrate/lite.flybin/activate)"
+                ),
+                None,
+            ))
+        }
+    };
+    let weights_path = datasets.tier_dir(tier).join(weights_name);
+    if !crate::substrate::feather::feather_complete(&weights_path) {
+        return json_err(&ApiError::invalid_request(
+            "feather_incomplete",
+            format!(
+                "{} is missing or truncated — download it first",
+                weights_path.display()
+            ),
+            None,
+        ));
+    }
+    if let Err(e) = datasets.claim_compile(tier) {
+        return json_ok(serde_json::json!({"tier": tier, "status": e}));
+    }
+
+    let annotations =
+        (tier == "standard").then(|| datasets.tier_dir(tier).join("body_annotations.feather"));
+    let nt = (tier == "standard").then(|| datasets.tier_dir(tier).join("body_nt.feather"));
+    let out_path = substrates_dir.join(format!("{tier}.flybin"));
+    let mgr = Arc::clone(mgr);
+    let datasets = Arc::clone(datasets);
+    let tier_s = tier.to_string();
+    datasets.set_hint(tier, "compiling: pass 1/2 (indexing neurons)");
+    std::thread::spawn(move || {
+        let spec = crate::substrate::MaleCnsSpec {
+            weights_path: &weights_path,
+            pre_col,
+            post_col,
+            weight_col,
+            annotations_path: annotations.as_deref(),
+            nt_path: nt.as_deref(),
+        };
+        match crate::substrate::compile_malecns(&spec, &out_path, crate::substrate::Quant::U8) {
+            Ok(report) => {
+                datasets.set_hint(&tier_s, "compiling: loading substrate");
+                match crate::substrate::load(&out_path) {
+                    Ok(sub) => {
+                        mgr.reload_substrate(Arc::new(sub), tier_s.clone());
+                        datasets.mark_compiled(&tier_s, &report);
+                    }
+                    Err(e) => datasets.mark_compile_error(&tier_s, &e.to_string()),
+                }
+            }
+            Err(e) => {
+                eprintln!("malecns compile failed for {tier_s}: {e}");
+                datasets.mark_compile_error(&tier_s, &e.to_string());
+            }
+        }
+    });
+    json_ok(serde_json::json!({"tier": tier, "compiling": true}))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run_server(
     substrate: Option<Arc<Substrate>>,
@@ -83,7 +186,7 @@ fn bearer(req: &HttpRequest) -> Option<&str> {
 }
 
 fn route(
-    mgr: &SessionManager,
+    mgr: &Arc<SessionManager>,
     admin: &AdminStore,
     datasets: &Arc<crate::datasets::DatasetStore>,
     llm: &crate::llm::LlmConfig,
@@ -152,7 +255,7 @@ fn route(
 
 #[allow(clippy::too_many_arguments)]
 fn route_authed(
-    mgr: &SessionManager,
+    mgr: &Arc<SessionManager>,
     admin: &AdminStore,
     datasets: &Arc<crate::datasets::DatasetStore>,
     llm: &crate::llm::LlmConfig,
@@ -253,6 +356,9 @@ fn route_authed(
                     }
                     Err(e) => json_err(&ApiError::invalid_request("download_error", e, None)),
                 }
+            }
+            ("POST", Some("datasets"), Some(tier), Some("activate")) => {
+                self::activate_tier(mgr, datasets, tier, substrates_dir)
             }
             ("GET", Some("datasets"), Some("status"), None) => {
                 json_ok(serde_json::json!({"tiers": datasets.list()}))
@@ -513,11 +619,11 @@ mod tests {
 
     #[test]
     fn health_and_models() {
-        let mgr = SessionManager::new(
+        let mgr = std::sync::Arc::new(SessionManager::new(
             Some(mini()),
             "test-substrate".into(),
             crate::engine::EngineConfig::default(),
-        );
+        ));
         let datasets = std::sync::Arc::new(crate::datasets::DatasetStore::new(
             std::path::PathBuf::from("/tmp/agent-datasets"),
         ));
@@ -558,11 +664,11 @@ mod tests {
 
     #[test]
     fn create_and_step() {
-        let mgr = SessionManager::new(
+        let mgr = std::sync::Arc::new(SessionManager::new(
             Some(mini()),
             "test-substrate".into(),
             crate::engine::EngineConfig::default(),
-        );
+        ));
         let datasets = std::sync::Arc::new(crate::datasets::DatasetStore::new(
             std::path::PathBuf::from("/tmp/agent-datasets"),
         ));

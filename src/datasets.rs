@@ -3,12 +3,11 @@
 //! Tiers:
 //! - lite:     FlyWire v783 Princeton CSV.gz dump (whole female brain) —
 //!   downloads and compiles end-to-end with the built-in CSV pipeline.
-//! - standard: MaleCNS v1.0 connectome-weights feather (neuron-to-neuron).
-//! - full:     MaleCNS v1.0 syn-partners feather (synapse-level partners).
-//!
-//! standard/full download and persist to disk, but compilation requires an
-//! Arrow/feather ingest which is not implemented — status reports
-//! `downloaded` with an explicit hint instead of pretending.
+//! - standard: MaleCNS v1.0 connectome-weights feather (neuron-to-neuron)
+//!   plus body annotations / neurotransmitters, compiled on activation via
+//!   the built-in Arrow IPC ingest (`substrate::feather`).
+//! - full:     MaleCNS v1.0 syn-partners feather (synapse-level partners),
+//!   same ingest path.
 
 use serde::Serialize;
 use std::collections::HashMap;
@@ -19,32 +18,60 @@ use std::sync::{Arc, Mutex};
 pub struct DatasetDef {
     pub tier: &'static str,
     pub base_url: &'static str,
-    pub bytes: u64,
-    /// (remote_filename, local_filename) pairs to download
-    pub files: &'static [(&'static str, &'static str)],
+    /// (remote_filename, local_filename, expected_bytes, md5_hex) — bytes
+    /// and md5 come from the upstream manifest; an empty md5 skips the
+    /// integrity check (the lite tier's sizes are estimates)
+    pub files: &'static [(&'static str, &'static str, u64, &'static str)],
+}
+
+impl DatasetDef {
+    pub fn total_bytes(&self) -> u64 {
+        self.files.iter().map(|f| f.2).sum()
+    }
 }
 
 pub const DATASETS: &[DatasetDef] = &[
     DatasetDef {
         tier: "lite",
         base_url: "https://raw.githubusercontent.com/ruvnet/RuVector/research/connectome-ruvector/examples/connectome-fly/assets",
-        bytes: 27_554_000 + 2_200_000,
         files: &[
-            ("connections_princeton.csv.gz", "connections.csv.gz"),
-            ("neurons.csv.gz", "neurons.csv.gz"),
+            ("connections_princeton.csv.gz", "connections.csv.gz", 27_554_000, ""),
+            ("neurons.csv.gz", "neurons.csv.gz", 2_200_000, ""),
         ],
     },
     DatasetDef {
         tier: "standard",
         base_url: "https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome",
-        bytes: 1_050_000_000,
-        files: &[("connectome-weights-male-cns-v1.0-minconf-0.5.feather", "connectome_weights.feather")],
+        files: &[
+            (
+                "connectome-weights-male-cns-v1.0-minconf-0.5.feather",
+                "connectome_weights.feather",
+                1_051_241_946,
+                "f30e9dcca25cfd021bf1e7b3d975599e",
+            ),
+            (
+                "body-annotations-male-cns-v1.0-minconf-0.5.feather",
+                "body_annotations.feather",
+                14_483_314,
+                "50a7718770c57220f160ba4f431ab89e",
+            ),
+            (
+                "body-neurotransmitters-male-cns-v1.0.feather",
+                "body_nt.feather",
+                43_282_834,
+                "3d842b12fe5c49eefade528d7dd24a1f",
+            ),
+        ],
     },
     DatasetDef {
         tier: "full",
         base_url: "https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome",
-        bytes: 2_970_000_000,
-        files: &[("syn-partners-male-cns-v1.0-minconf-0.5-traced-only.feather", "syn_partners.feather")],
+        files: &[(
+            "syn-partners-male-cns-v1.0-minconf-0.5-traced-only.feather",
+            "syn_partners.feather",
+            2_965_367_002,
+            "f5bc1c5ce34a01b68956414b530edda8",
+        )],
     },
 ];
 
@@ -54,6 +81,7 @@ pub enum Status {
     Idle,
     Downloading,
     Downloaded,
+    Compiling,
     Compiled,
     Error,
 }
@@ -90,7 +118,7 @@ impl DatasetStore {
     pub fn new(data_dir: PathBuf) -> Self {
         let mut states = HashMap::new();
         for d in DATASETS {
-            let mut st = TierState::new(d.tier, d.bytes);
+            let mut st = TierState::new(d.tier, d.total_bytes());
             // check if any non-empty files exist in the tier directory
             let tier_dir = data_dir.join(d.tier);
             let has_files = std::fs::read_dir(&tier_dir)
@@ -104,7 +132,7 @@ impl DatasetStore {
                 let total_size: u64 = d
                     .files
                     .iter()
-                    .filter_map(|(_, local)| {
+                    .filter_map(|(_, local, _, _)| {
                         std::fs::metadata(tier_dir.join(local))
                             .ok()
                             .map(|m| m.len())
@@ -112,7 +140,7 @@ impl DatasetStore {
                     .sum();
                 if total_size == 0 {
                     // remove incomplete files, force re-download
-                    for (_, local) in d.files {
+                    for (_, local, _, _) in d.files {
                         let _ = std::fs::remove_file(tier_dir.join(local));
                     }
                     states.insert(d.tier.to_string(), st);
@@ -132,8 +160,27 @@ impl DatasetStore {
                         st.hint = Some("files on disk, compile to enable".into());
                     }
                 } else {
-                    st.status = Status::Downloaded;
-                    st.hint = Some("feather ingest not implemented".into());
+                    // malecns tiers: compiled flybin wins, else a complete
+                    // feather is activatable, else the file is truncated
+                    let flybin = data_dir
+                        .parent()
+                        .unwrap_or(&data_dir)
+                        .join("substrates")
+                        .join(format!("{}.flybin", d.tier));
+                    let weights_file = tier_dir.join(d.files[0].1);
+                    if flybin.exists() {
+                        st.status = Status::Compiled;
+                        st.hint = Some(format!(
+                            "already compiled: {}",
+                            flybin.file_name().unwrap_or_default().to_string_lossy()
+                        ));
+                    } else if crate::substrate::feather::feather_complete(&weights_file) {
+                        st.status = Status::Downloaded;
+                        st.hint = Some("feather ready — activate to compile".into());
+                    } else {
+                        st.status = Status::Error;
+                        st.error = Some("feather file truncated — click download to resume".into());
+                    }
                 }
             }
             states.insert(d.tier.to_string(), st);
@@ -175,15 +222,15 @@ impl DatasetStore {
         if cur_status == Status::Downloading {
             return Err("download already in flight".into());
         }
-        // check if all final files exist with correct size
+        // check if all final files exist with correct size (10% tolerance
+        // for the lite tier whose sizes are estimates)
         let tier_dir = self.data_dir.join(tier);
-        let per_file = def.bytes / def.files.len().max(1) as u64;
-        let all_complete = def.files.iter().all(|(_, local)| {
-            let p = tier_dir.join(local);
-            match p.metadata() {
-                Ok(m) => m.len() >= per_file * 9 / 10, // allow 10% tolerance
-                Err(_) => false,
-            }
+        let all_complete = def.files.iter().all(|(_, local, expected, _)| {
+            tier_dir
+                .join(local)
+                .metadata()
+                .map(|m| m.len() >= expected * 9 / 10)
+                .unwrap_or(false)
         });
         if all_complete {
             return Err("files already downloaded".into());
@@ -212,7 +259,9 @@ impl DatasetStore {
         let files: Vec<(String, String)> = def
             .files
             .iter()
-            .map(|(remote, local)| (format!("{}/{}", def.base_url, remote), local.to_string()))
+            .map(|(remote, local, _, _)| {
+                (format!("{}/{}", def.base_url, remote), local.to_string())
+            })
             .collect();
         std::thread::spawn(move || {
             let _ = std::fs::create_dir_all(&out_dir);
@@ -220,6 +269,12 @@ impl DatasetStore {
             for (url, local_name) in &files {
                 let final_path = out_dir.join(local_name);
                 let part_path = final_path.with_extension("part");
+                // already complete on disk (feather magic verified)? skip so
+                // partially-populated tiers only fetch what's missing
+                if crate::substrate::feather::feather_complete(&final_path) {
+                    downloaded_total += final_path.metadata().map(|m| m.len()).unwrap_or(0);
+                    continue;
+                }
                 // resume: if .part exists, get its size for Range header
                 let resume_from = part_path.metadata().map(|m| m.len()).unwrap_or(0);
                 let mut ok = false;
@@ -259,6 +314,35 @@ impl DatasetStore {
                 if part_path.exists() {
                     std::fs::rename(&part_path, &final_path).ok();
                 }
+                // integrity: verify md5 against the upstream manifest —
+                // a truncated/double-written file must never be marked done
+                let md5_hex = def
+                    .files
+                    .iter()
+                    .find(|f| f.1 == *local_name)
+                    .and_then(|f| (!f.3.is_empty()).then_some(f.3));
+                if let Some(expected_md5) = md5_hex {
+                    match file_md5(&final_path) {
+                        Ok(got) if got == *expected_md5 => {}
+                        Ok(got) => {
+                            let _ = std::fs::remove_file(&final_path);
+                            store.mark_error(
+                                tier_s.as_str(),
+                                &format!(
+                                    "{local_name}: md5 mismatch (got {got}, expected {expected_md5}) — re-download"
+                                ),
+                            );
+                            return;
+                        }
+                        Err(e) => {
+                            store.mark_error(
+                                tier_s.as_str(),
+                                &format!("{local_name}: md5 check failed: {e}"),
+                            );
+                            return;
+                        }
+                    }
+                }
             }
             store.set_total(tier_s.as_str(), downloaded_total);
             store.mark_done(tier_s.as_str());
@@ -282,8 +366,12 @@ impl DatasetStore {
             st.downloaded = st.total;
             if st.tier == "lite" {
                 // auto-compile lite tier using the built-in CSV pipeline
-                let lite_dir = data_dir.join("datasets").join("lite");
-                let out = data_dir.join("substrates").join("lite.flybin");
+                let lite_dir = data_dir.join("lite");
+                let out = data_dir
+                    .parent()
+                    .unwrap_or(&data_dir)
+                    .join("substrates")
+                    .join("lite.flybin");
                 match crate::substrate::compile_flywire(
                     &lite_dir,
                     &out,
@@ -303,11 +391,61 @@ impl DatasetStore {
                 }
             } else {
                 st.status = Status::Downloaded;
-                st.hint = Some(
-                    "feather ingest not implemented: compile requires the arrow crate (roadmap)"
-                        .into(),
-                );
+                st.hint = Some("feather ready — activate to compile".into());
             }
+        });
+    }
+
+    /// Data directory of one tier (feather inputs live here).
+    pub fn tier_dir(&self, tier: &str) -> PathBuf {
+        self.data_dir.join(tier)
+    }
+
+    /// Compiled-substrate output directory (`<data_root>/substrates`).
+    pub fn substrates_dir(&self) -> PathBuf {
+        self.data_dir
+            .parent()
+            .unwrap_or(&self.data_dir)
+            .join("substrates")
+    }
+
+    /// Atomically claim the compiling slot for a tier (check-and-set in one
+    /// lock so concurrent activations can't race).
+    pub fn claim_compile(&self, tier: &str) -> Result<(), String> {
+        let mut states = self.states.lock().unwrap();
+        let st = states.get_mut(tier).ok_or("unknown tier")?;
+        match st.status {
+            Status::Compiling => Err("compile already in flight".into()),
+            Status::Compiled => Err("already compiled".into()),
+            Status::Downloading => Err("download in flight".into()),
+            _ => {
+                st.status = Status::Compiling;
+                st.error = None;
+                Ok(())
+            }
+        }
+    }
+
+    pub fn mark_compiled(&self, tier: &str, report: &crate::substrate::CompileReport) {
+        self.set(tier, |st| {
+            st.status = Status::Compiled;
+            st.hint = Some(format!(
+                "compiled: {} neurons / {} edges → {}.flybin",
+                report.n_neurons, report.n_edges_aggregated, tier
+            ));
+        });
+    }
+
+    pub fn mark_compile_error(&self, tier: &str, err: &str) {
+        self.set(tier, |st| {
+            st.status = Status::Error;
+            st.error = Some(format!("compile failed: {err}"));
+        });
+    }
+
+    pub fn set_hint(&self, tier: &str, hint: &str) {
+        self.set(tier, |st| {
+            st.hint = Some(hint.to_string());
         });
     }
 
@@ -317,6 +455,23 @@ impl DatasetStore {
             st.error = Some(err.to_string());
         });
     }
+}
+
+/// md5 of a file as lowercase hex (streamed, bounded memory).
+fn file_md5(path: &std::path::Path) -> Result<String, String> {
+    use md5::Digest;
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut hasher = md5::Md5::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = f.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// Download a URL to a file, resuming from an existing `.part` file

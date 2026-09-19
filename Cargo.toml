@@ -1,6 +1,7 @@
 [workspace]
-members = ["web"]
-exclude = ["third_party/dioxus-ui"]
+# `web/` is a pure npm/Vite project (the Dioxus rust crate was abandoned —
+# wasm-bindgen has no linux-aarch64 release) and must not be a member.
+exclude = ["web", "third_party/dioxus-ui"]
 resolver = "2"
 
 [package]
@@ -21,6 +22,8 @@ path = "src/main.rs"
 [dependencies]
 flate2 = "1"
 getrandom = "0.2"
+lz4_flex = "0.11"
+md-5 = "0.10"
 pollster = { version = "0.4", optional = true }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
