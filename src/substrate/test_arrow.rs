@@ -36,7 +36,7 @@ impl Fbb {
     }
 
     fn align(&mut self, n: usize) {
-        while self.buf.len() % n != 0 {
+        while !self.buf.len().is_multiple_of(n) {
             self.buf.push(0);
         }
     }
@@ -113,7 +113,7 @@ impl Fbb {
     /// The count is placed so elements start 8-aligned.
     pub fn struct_vec16(&mut self, items: &[(i64, i64)]) -> usize {
         // 4-byte count must land at (8k - 4) so elements are 8-aligned
-        while (self.pos() + 4) % 8 != 0 {
+        while !(self.pos() + 4).is_multiple_of(8) {
             self.buf.push(0);
         }
         let start = self.pos();
@@ -127,7 +127,7 @@ impl Fbb {
 
     /// Vector of inline 24-byte Block structs: {i64, i32, pad, i64}.
     pub fn block_vec(&mut self, items: &[(u64, u64, u64)]) -> usize {
-        while (self.pos() + 4) % 8 != 0 {
+        while !(self.pos() + 4).is_multiple_of(8) {
             self.buf.push(0);
         }
         let start = self.pos();
@@ -281,13 +281,12 @@ pub fn build_file(cols: &[(&str, ColKind)], column_bufs: &[ColBuf], compress: bo
     let mut payloads: Vec<Vec<u8>> = Vec::new();
     let mut buffer_meta: Vec<(u64, u64)> = Vec::new();
     let mut off = 0u64;
-    let mut place =
-        |bytes: &[u8], meta: &mut Vec<(u64, u64)>, pl: &mut Vec<Vec<u8>>, off: &mut u64| {
-            *off = off.div_ceil(8) * 8;
-            meta.push((*off, bytes.len() as u64));
-            pl.push(bytes.to_vec());
-            *off += bytes.len() as u64;
-        };
+    let place = |bytes: &[u8], meta: &mut Vec<(u64, u64)>, pl: &mut Vec<Vec<u8>>, off: &mut u64| {
+        *off = off.div_ceil(8) * 8;
+        meta.push((*off, bytes.len() as u64));
+        pl.push(bytes.to_vec());
+        *off += bytes.len() as u64;
+    };
     for cb in column_bufs {
         match cb {
             ColBuf::Fixed { data, .. } => {
@@ -346,7 +345,7 @@ fn push_message(out: &mut Vec<u8>, fb: &[u8]) {
     out.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
     out.extend_from_slice(&(fb.len() as u32).to_le_bytes());
     out.extend_from_slice(fb);
-    while out.len() % 8 != 0 {
+    while !out.len().is_multiple_of(8) {
         out.push(0);
     }
 }

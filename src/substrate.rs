@@ -963,7 +963,7 @@ mod malecns_tests {
             .outgoing(0)
             .map(|(i, w)| (sub.root_ids[i as usize], w))
             .collect();
-        got.sort_by(|a, b| a.0.cmp(&b.0));
+        got.sort_by_key(|a| a.0);
         assert_eq!(got, vec![(200, 5.0), (300, 300.0)]);
         let got: Vec<(u64, f32)> = sub
             .outgoing(1)
