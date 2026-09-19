@@ -5,6 +5,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 fn main() {
+    // the Vulkan loader complains when this is unset (common in proot);
+    // point it at a writable runtime dir so wgpu inits cleanly
+    if std::env::var_os("XDG_RUNTIME_DIR").is_none() {
+        std::env::set_var("XDG_RUNTIME_DIR", "/tmp");
+    }
     let args: Vec<String> = std::env::args().collect();
     let code = match args.get(1).map(String::as_str) {
         Some("compile-substrate") => cmd_compile(&args[2..]),

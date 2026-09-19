@@ -57,17 +57,48 @@ pub struct WgpuBackend {
 }
 
 /// Lightweight adapter probe for the Settings page (no buffers allocated).
+/// Reports every Vulkan adapter, hardware first, software renderers last.
 pub fn probe() -> Option<GpuProbe> {
+    let probes = probe_all();
+    probes.into_iter().next()
+}
+
+/// All Vulkan adapters on the device, hardware before software.
+pub fn probe_all() -> Vec<GpuProbe> {
     let instance = wgpu::Instance::default();
-    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))?;
-    let info = adapter.get_info();
-    Some(GpuProbe {
-        backend: "wgpu",
-        device: format!("{} ({:?})", info.name, info.backend),
-    })
+    let mut out: Vec<GpuProbe> = instance
+        .enumerate_adapters(wgpu::Backends::VULKAN)
+        .into_iter()
+        .map(|a| {
+            let info = a.get_info();
+            GpuProbe {
+                backend: "wgpu",
+                device: format!(
+                    "{} — {:?} / {:?}",
+                    info.name,
+                    info.backend,
+                    type_label(info.device_type)
+                ),
+            }
+        })
+        .collect();
+    // hardware adapters first so init prefers them over software Vulkan
+    out.sort_by_key(|p| !is_hardware_label(&p.device));
+    out
+}
+
+fn type_label(t: wgpu::DeviceType) -> &'static str {
+    match t {
+        wgpu::DeviceType::DiscreteGpu => "discrete GPU",
+        wgpu::DeviceType::IntegratedGpu => "integrated GPU",
+        wgpu::DeviceType::VirtualGpu => "virtual GPU",
+        wgpu::DeviceType::Cpu => "software rendering",
+        _ => "unknown",
+    }
+}
+
+fn is_hardware_label(device: &str) -> bool {
+    !device.contains("software rendering")
 }
 
 fn buf_u32(device: &wgpu::Device, usage: wgpu::BufferUsages, data: &[u32]) -> wgpu::Buffer {
@@ -84,11 +115,18 @@ pub fn init(
     _cfg: &crate::engine::EngineConfig,
 ) -> Result<WgpuBackend, String> {
     let instance = wgpu::Instance::default();
-    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))
-    .ok_or("no GPU adapter (Vulkan/Metal/DX12 unreachable)")?;
+    // hardware adapters first, software (llvmpipe) as last resort
+    let mut adapters = instance.enumerate_adapters(wgpu::Backends::VULKAN);
+    adapters.sort_by_key(|a| {
+        matches!(
+            a.get_info().device_type,
+            wgpu::DeviceType::Cpu | wgpu::DeviceType::Other
+        )
+    });
+    let adapter = adapters
+        .into_iter()
+        .next()
+        .ok_or("no Vulkan adapter reachable")?;
     let info = adapter.get_info();
     let (device, queue) = block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {

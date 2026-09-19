@@ -97,9 +97,7 @@ pub fn probe() -> Vec<GpuProbe> {
             #[allow(unused_mut)]
             let mut out = Vec::new();
             #[cfg(feature = "gpu")]
-            if let Some(p) = wgpu_backend::probe() {
-                out.push(p);
-            }
+            out.extend(wgpu_backend::probe_all());
             #[cfg(feature = "cuda")]
             if let Some(p) = cuda_backend::probe() {
                 out.push(p);
