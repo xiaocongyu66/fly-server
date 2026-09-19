@@ -285,6 +285,10 @@ fn route_authed(
     segs: &[&str],
 ) -> HttpResponse {
     let is_admin = role == "admin";
+    // settings live at <data_dir>/config.json — derive the data dir from it
+    let data_dir = settings_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
 
     // admin-only management endpoints
     if segs.first() == Some(&"v1") && segs.get(1) == Some(&"admin") {
@@ -358,6 +362,51 @@ fn route_authed(
                         json_ok(serde_json::json!({"activated": id, "sessions_cleared": cleared}))
                     }
                     Err(e) => json_err(&ApiError::not_found(format!("substrate load failed: {e}"))),
+                }
+            }
+            // training plug-ins (.flydelta files): list / enable / delete
+            ("GET", Some("training"), None, _) => {
+                let at = mgr.active_training.lock().unwrap();
+                json_ok(serde_json::json!({
+                    "files": crate::train::list_training(data_dir),
+                    "enabled": at.files,
+                }))
+            }
+            ("POST", Some("training"), Some(name), Some("enable" | "disable")) => {
+                let on = a3 == Some("enable");
+                match crate::train::set_training_enabled(mgr, data_dir, name, on) {
+                    Ok(()) => {
+                        mgr.refresh_overlays();
+                        json_ok(serde_json::json!({"name": name, "enabled": on}))
+                    }
+                    Err(e) => json_err(&e),
+                }
+            }
+            ("DELETE", Some("training"), Some(name), None) => {
+                match crate::train::delete_training(mgr, data_dir, name) {
+                    Ok(()) => {
+                        mgr.refresh_overlays();
+                        json_ok(serde_json::json!({"deleted": true, "name": name}))
+                    }
+                    Err(e) => json_err(&e),
+                }
+            }
+            ("POST", Some("train"), Some("save"), None) => {
+                match parse_body::<serde_json::Value>(req) {
+                    Ok(b) => {
+                        let name = b.get("name").and_then(|v| v.as_str()).unwrap_or("trained");
+                        let cfg = mgr.train_job.last_cfg.lock().unwrap().clone();
+                        match crate::train::save_training(mgr, data_dir, name, &cfg) {
+                            Ok(meta) => json_ok(serde_json::json!({
+                                "saved": true,
+                                "name": meta.name,
+                                "deltas": meta.deltas,
+                                "bytes": meta.bytes,
+                            })),
+                            Err(e) => json_err(&e),
+                        }
+                    }
+                    Err(resp) => resp,
                 }
             }
             ("GET", Some("gpu"), None, _) => json_ok(serde_json::json!({

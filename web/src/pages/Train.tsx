@@ -36,6 +36,8 @@ export function Train() {
   const [status, setStatus] = useState<TrainStatus | null>(null)
   const [err, setErr] = useState("")
   const [starting, setStarting] = useState(false)
+  const [saveName, setSaveName] = useState("")
+  const [saved, setSaved] = useState("")
   const timer = useRef<number | null>(null)
 
   const poll = useCallback(async () => {
@@ -95,6 +97,18 @@ export function Train() {
       await poll()
     } finally {
       setStarting(false)
+    }
+  }
+
+  async function saveFile() {
+    setErr("")
+    try {
+      const r = await api.post("/v1/admin/train/save", {
+        name: saveName || "trained",
+      })
+      setSaved(`${r.name} (${r.deltas} deltas)`)
+    } catch (e: any) {
+      setErr(e.message)
     }
   }
 
@@ -198,6 +212,18 @@ export function Train() {
                 {status.stopped && (
                   <div className="text-amber-500">{t("train.stopped_early")}</div>
                 )}
+                <div className="flex gap-2 items-center pt-2">
+                  <Input
+                    className="w-48"
+                    placeholder={t("train.save_placeholder")}
+                    value={saveName}
+                    onChange={(e) => setSaveName(e.target.value)}
+                  />
+                  <Button variant="outline" onClick={saveFile}>
+                    {t("train.save")}
+                  </Button>
+                  {saved && <span className="text-sm text-green-600">{saved}</span>}
+                </div>
               </div>
             )}
             {status.phase === "failed" && (

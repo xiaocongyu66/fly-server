@@ -122,6 +122,14 @@ const EN: Dict = {
   "train.best_reward": "Best reward",
   "train.total_ticks": "Total ticks simulated",
   "train.stopped_early": "Stopped early by request",
+  "train.save": "Save as training file",
+  "train.save_placeholder": "training file name",
+  "trainfile.title": "Training files (plug-ins)",
+  "trainfile.desc": "Weight deltas that plug onto the loaded model — small, shareable, stackable. The base model is never modified.",
+  "trainfile.enable": "enabled",
+  "trainfile.disable": "disabled",
+  "trainfile.none": "No training files yet — run training and save one.",
+  "trainfile.delete": "Delete",
   "train.idle": "No training run yet.",
 }
 
@@ -241,6 +249,14 @@ const ZH: Dict = {
   "train.best_reward": "最佳奖励",
   "train.total_ticks": "模拟总步数",
   "train.stopped_early": "已按要求提前停止",
+  "train.save": "保存为训练文件",
+  "train.save_placeholder": "训练文件名",
+  "trainfile.title": "训练文件（插头）",
+  "trainfile.desc": "叠加在已加载模型上的权重增量——小体积、可分享、可多插。底座模型永不被修改。",
+  "trainfile.enable": "已启用",
+  "trainfile.disable": "未启用",
+  "trainfile.none": "还没有训练文件——跑一次训练并保存。",
+  "trainfile.delete": "删除",
   "train.idle": "尚无训练任务。",
 }
 

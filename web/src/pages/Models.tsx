@@ -216,6 +216,95 @@ export function Models() {
           )
         })}
       </div>
+      <TrainingFiles />
     </div>
+  )
+}
+
+type TrainFileMeta = {
+  name: string
+  base_model: string
+  deltas: number
+  bytes: number
+  created_at: number
+}
+
+export function TrainingFiles() {
+  const { t } = useI18n()
+  const [files, setFiles] = useState<TrainFileMeta[]>([])
+  const [enabled, setEnabled] = useState<string[]>([])
+  const [err, setErr] = useState("")
+
+  const load = useCallback(async () => {
+    try {
+      const r = await api.get("/v1/admin/training")
+      setFiles(r.files ?? [])
+      setEnabled(r.enabled ?? [])
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  async function toggle(name: string, on: boolean) {
+    setErr("")
+    try {
+      await api.post(`/v1/admin/training/${encodeURIComponent(name)}/${on ? "enable" : "disable"}`, {})
+      await load()
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+
+  async function del(name: string) {
+    setErr("")
+    try {
+      await api.del(`/v1/admin/training/${encodeURIComponent(name)}`)
+      await load()
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t("trainfile.title")}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-sm text-muted-foreground">{t("trainfile.desc")}</p>
+        {err && <div className="text-sm text-red-500">{err}</div>}
+        {files.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("trainfile.none")}</p>
+        ) : (
+          <div className="space-y-2">
+            {files.map((f) => {
+              const on = enabled.includes(f.name)
+              return (
+                <div key={f.name} className="flex items-center justify-between gap-2 rounded border p-2">
+                  <div className="min-w-0">
+                    <div className="truncate font-mono text-sm">{f.name}</div>
+                    <div className="text-xs text-muted-foreground">
+                      base: {f.base_model} · {f.deltas} deltas · {(f.bytes / 1024).toFixed(1)} KB
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant={on ? "default" : "outline"} onClick={() => toggle(f.name, !on)}>
+                      {on ? t("trainfile.enable") : t("trainfile.disable")}
+                    </Button>
+                    <Button variant="ghost" onClick={() => del(f.name)}>
+                      {t("trainfile.delete")}
+                    </Button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }

@@ -60,10 +60,14 @@ pub struct SessionState {
 }
 
 pub struct SessionManager {
-    substrate: RwLock<Option<Arc<Substrate>>>,
+    pub(crate) substrate: RwLock<Option<Arc<Substrate>>>,
     substrate_id: RwLock<String>,
     engine_cfg: RwLock<EngineConfig>,
-    sessions: Mutex<HashMap<String, SessionState>>,
+    pub(crate) sessions: Mutex<HashMap<String, SessionState>>,
+    /// Session carrying the in-progress training overlay, if any.
+    pub train_session: RwLock<Option<String>>,
+    /// Enabled training files (plug-ins) and their merged root-id deltas.
+    pub active_training: Mutex<crate::train::ActiveTraining>,
     snapshots: Mutex<snapshot::SnapshotStore>,
     pub train_job: crate::train::TrainJob,
     snapshot_every: u64,
@@ -95,6 +99,8 @@ impl SessionManager {
             substrate_id: RwLock::new(substrate_id),
             engine_cfg: RwLock::new(engine_cfg),
             sessions: Mutex::new(HashMap::new()),
+            train_session: RwLock::new(None),
+            active_training: Mutex::new(crate::train::ActiveTraining::default()),
             snapshots: Mutex::new(snapshot::SnapshotStore::new(8)),
             train_job: crate::train::TrainJob::default(),
             snapshot_every: 100,
@@ -367,6 +373,10 @@ impl SessionManager {
         };
         let obj = Self::to_object(&state, &req.adapters);
         self.sessions.lock().unwrap().insert(id, state);
+        // carry enabled training plug-ins into the fresh engine
+        if !self.active_training.lock().unwrap().merged.is_empty() {
+            self.refresh_overlays();
+        }
         Ok(obj)
     }
 

@@ -144,6 +144,25 @@ pub struct Engine {
     gpu_built: gpu::GpuMode,
     is_inhibitory: Vec<bool>,
     v_mirror: Vec<f32>,
+    /// Post-training weight deltas: pre_idx -> {post_idx -> delta}. Applied
+    /// as extra conductance on scatter for pres that just spiked, so the
+    /// read-only flybin stays intact and consolidation can merge later.
+    pub overlay: std::collections::HashMap<u32, std::collections::HashMap<u32, f32>>,
+    /// Tick of the most recent spike per neuron (u32::MAX = never).
+    last_spike_tick: Vec<u32>,
+    /// Pres that spiked within the STDP window: (tick, neuron idx).
+    recent_pres: Vec<(i64, u32)>,
+    /// Active during training episodes; None otherwise.
+    pub learning: Option<LearningState>,
+}
+
+/// Reward-modulated STDP parameters (dopamine-gated, mushroom-body style).
+#[derive(Debug, Clone, Copy)]
+pub struct LearningState {
+    pub lr: f32,
+    pub window: u32,
+    pub tau: f32,
+    pub reward: f32,
 }
 
 /// Per-thread scratch for the parallel scatter phase (owned by the worker).
@@ -229,6 +248,10 @@ impl Engine {
             gpu_built: gpu::GpuMode::Off,
             is_inhibitory,
             v_mirror: Vec::new(),
+            overlay: std::collections::HashMap::new(),
+            last_spike_tick: vec![u32::MAX; n],
+            recent_pres: Vec::new(),
+            learning: None,
         }
     }
 
@@ -290,6 +313,11 @@ impl Engine {
             mean_v: 0.0,
         };
         let mut last = current;
+        if self.learning.is_some() && self.gpu.is_some() {
+            // training runs on the CPU path so overlay currents are exact
+            eprintln!("train: GPU suspended for learning (CPU-only v1)");
+            self.gpu = None;
+        }
         self.ensure_gpu();
         if self.gpu.is_some() {
             let params = self.gpu_params();
@@ -364,6 +392,9 @@ impl Engine {
         if self.cfg.n_threads <= 1 {
             for _ in 0..steps {
                 let r = self.tick_one_serial();
+                if self.learning.is_some() {
+                    self.learn_step();
+                }
                 per_tick(&r, self);
                 last = r;
             }
@@ -371,6 +402,81 @@ impl Engine {
             last = self.run_ticks_parallel(steps, per_tick);
         }
         last
+    }
+
+    fn record_spike_times(&mut self, spiked: &[u32]) {
+        let t = self.tick as u32;
+        for &i in spiked {
+            self.last_spike_tick[i as usize] = t;
+        }
+    }
+
+    fn learn_step(&mut self) {
+        self.apply_overlay_currents();
+        let spiked: Vec<u32> = self.last_spiked.clone();
+        let t = self.tick as i64;
+        for &i in &spiked {
+            self.last_spike_tick[i as usize] = t as u32;
+            self.recent_pres.push((t, i));
+        }
+        self.apply_stdp();
+    }
+
+    /// The overlay of an active pre acts as extra conductance on its
+    /// outgoing targets — the weight change, applied only when that
+    /// synapse is actually in use.
+    fn apply_overlay_currents(&mut self) {
+        let pres: Vec<u32> = self.last_spiked.clone();
+        for &pre in &pres {
+            let Some(entries) = self.overlay.get(&pre) else {
+                continue;
+            };
+            for (&post, &dw) in entries {
+                let (c, l) = self.locate(post as usize);
+                if let Ok(mut ch) = self.g_exc[c].try_lock() {
+                    if l < ch.len() {
+                        ch[l] += dw * self.cfg.weight_scale;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Pair-based R-STDP across the whole window: pre firing before post
+    /// within the window potentiates (scaled by reward), post firing before
+    /// pre depresses at half strength. Deltas accumulate in the overlay and
+    /// take effect on subsequent ticks via `apply_overlay_currents`.
+    fn apply_stdp(&mut self) {
+        let Some(ls) = self.learning else { return };
+        let now = self.tick as i64;
+        self.recent_pres
+            .retain(|(t, _)| now - *t <= ls.window as i64);
+        let mut touched: Vec<((u32, u32), f32)> = Vec::with_capacity(self.recent_pres.len() * 4);
+        for &(pt, pre) in &self.recent_pres {
+            for (post, _w) in self.substrate.outgoing(pre as usize) {
+                let st = self.last_spike_tick[post as usize];
+                if st == u32::MAX {
+                    continue;
+                }
+                let dt = st as i64 - pt; // post_time - pre_time
+                let dw = if dt > 0 && dt <= ls.window as i64 {
+                    ls.lr * ls.reward.max(0.0) * (-(dt as f32) / ls.tau).exp()
+                } else if dt < 0 && -dt <= ls.window as i64 {
+                    -0.5 * ls.lr * ls.reward.abs().max(0.1) * ((dt as f32) / ls.tau).exp()
+                } else {
+                    continue;
+                };
+                touched.push(((pre, post), dw));
+            }
+        }
+        for ((pre, post), dw) in touched {
+            *self
+                .overlay
+                .entry(pre)
+                .or_default()
+                .entry(post)
+                .or_insert(0.0) += dw;
+        }
     }
 
     fn gpu_params(&self) -> gpu::TickParams {
