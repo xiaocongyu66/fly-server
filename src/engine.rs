@@ -404,13 +404,6 @@ impl Engine {
         last
     }
 
-    fn record_spike_times(&mut self, spiked: &[u32]) {
-        let t = self.tick as u32;
-        for &i in spiked {
-            self.last_spike_tick[i as usize] = t;
-        }
-    }
-
     fn learn_step(&mut self) {
         self.apply_overlay_currents();
         let spiked: Vec<u32> = self.last_spiked.clone();

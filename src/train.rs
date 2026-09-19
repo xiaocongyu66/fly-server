@@ -356,7 +356,7 @@ impl crate::session::SessionManager {
         }
         let mut rewards: Vec<f32> = Vec::with_capacity(episodes as usize);
         let mut stopped = false;
-        'outer: for ep in 0..episodes {
+        'outer: for _ep in 0..episodes {
             if self
                 .train_job
                 .stop
@@ -686,7 +686,7 @@ pub fn list_training(data_dir: &std::path::Path) -> Vec<TrainingFileMeta> {
             }
         }
     }
-    out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    out.sort_by_key(|f| std::cmp::Reverse(f.created_at));
     out
 }
 
