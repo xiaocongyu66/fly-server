@@ -378,6 +378,20 @@ fn route_authed(
             ("POST", Some("datasets"), Some(tier), Some("activate")) => {
                 self::activate_tier(mgr, datasets, tier, substrates_dir)
             }
+            // post-training slot: rollout episodes against the live substrate
+            ("POST", Some("train"), None, _) => {
+                match parse_body::<crate::train::TrainConfig>(req) {
+                    Ok(cfg) => match mgr.start_train(cfg) {
+                        Ok(()) => json_ok(serde_json::json!({"started": true})),
+                        Err(e) => json_err(&e),
+                    },
+                    Err(resp) => resp,
+                }
+            }
+            ("GET", Some("train"), Some("status"), None) => json_ok(mgr.train_status()),
+            ("POST", Some("train"), Some("stop"), None) => {
+                json_ok(serde_json::json!({"stop_requested": mgr.stop_train()}))
+            }
             ("GET", Some("datasets"), Some("status"), None) => {
                 json_ok(serde_json::json!({"tiers": datasets.list()}))
             }

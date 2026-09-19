@@ -131,6 +131,138 @@ pub fn baseline_policy(actions: &[Action]) -> Option<u64> {
     best.map(|(_, id)| id)
 }
 
+/// Lifecycle of the background training job, reported by
+/// `GET /v1/admin/train/status`.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub enum TrainPhase {
+    Idle,
+    Running {
+        episode: u32,
+        total_episodes: u32,
+        steps_done: u64,
+    },
+    Done {
+        #[serde(flatten)]
+        result: TrainResult,
+        stopped: bool,
+    },
+    Failed {
+        error: String,
+    },
+}
+
+impl crate::session::SessionManager {
+    /// Claim the training slot and spawn the background episode loop
+    /// (409-conflict when a job is already running).
+    pub fn start_train(self: &std::sync::Arc<Self>, cfg: TrainConfig) -> Result<(), ApiError> {
+        {
+            let mut st = self.train_job.state.lock().unwrap();
+            if matches!(*st, TrainPhase::Running { .. }) {
+                return Err(ApiError::conflict(
+                    "train_in_flight",
+                    "a training job is already running — poll /v1/admin/train/status",
+                ));
+            }
+            *st = TrainPhase::Running {
+                episode: 0,
+                total_episodes: cfg.episodes.max(1),
+                steps_done: 0,
+            };
+        }
+        self.train_job
+            .stop
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        let mgr = std::sync::Arc::clone(self);
+        std::thread::spawn(move || {
+            mgr.run_train_loop(cfg);
+        });
+        Ok(())
+    }
+
+    /// Episode loop: rollout → record reward → publish progress. Exits
+    /// early on `stop` or episode failure.
+    fn run_train_loop(self: &std::sync::Arc<Self>, cfg: TrainConfig) {
+        let episodes = cfg.episodes.max(1);
+        let steps = cfg.steps_per_episode.max(1) as u64;
+        let mut rewards: Vec<f32> = Vec::with_capacity(episodes as usize);
+        let mut stopped = false;
+        for ep in 0..episodes {
+            if self
+                .train_job
+                .stop
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                stopped = true;
+                break;
+            }
+            match run_episode(self, &cfg, ep) {
+                Ok(r) => rewards.push(r),
+                Err(e) => {
+                    *self.train_job.state.lock().unwrap() = TrainPhase::Failed {
+                        error: e.to_string(),
+                    };
+                    return;
+                }
+            }
+            *self.train_job.state.lock().unwrap() = TrainPhase::Running {
+                episode: rewards.len() as u32,
+                total_episodes: episodes,
+                steps_done: rewards.len() as u64 * steps,
+            };
+        }
+        let n = rewards.len() as f32;
+        let mean = if n > 0.0 {
+            rewards.iter().sum::<f32>() / n
+        } else {
+            0.0
+        };
+        let best = rewards.iter().copied().fold(0.0f32, f32::max);
+        *self.train_job.state.lock().unwrap() = TrainPhase::Done {
+            result: TrainResult {
+                episodes: rewards.len() as u32,
+                mean_reward: mean,
+                best_reward: best,
+                total_ticks: rewards.len() as u64 * steps,
+            },
+            stopped,
+        };
+    }
+
+    pub fn train_status(&self) -> TrainPhase {
+        self.train_job.state.lock().unwrap().clone()
+    }
+
+    /// Request an early stop; returns whether a job was running.
+    pub fn stop_train(&self) -> bool {
+        let running = matches!(
+            *self.train_job.state.lock().unwrap(),
+            TrainPhase::Running { .. }
+        );
+        if running {
+            self.train_job
+                .stop
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        running
+    }
+}
+
+/// Shared slot for at most one background training job.
+pub struct TrainJob {
+    state: std::sync::Mutex<TrainPhase>,
+    stop: std::sync::atomic::AtomicBool,
+}
+
+impl Default for TrainJob {
+    fn default() -> Self {
+        Self {
+            state: std::sync::Mutex::new(TrainPhase::Idle),
+            stop: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

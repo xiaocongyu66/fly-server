@@ -31,6 +31,14 @@ impl ApiError {
             param: None,
         }
     }
+    pub fn conflict(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            err_type: "conflict_error",
+            code,
+            message: message.into(),
+            param: None,
+        }
+    }
     pub fn internal(message: impl Into<String>) -> Self {
         Self {
             err_type: "server_error",
@@ -42,6 +50,7 @@ impl ApiError {
     pub fn http_status(&self) -> u16 {
         match self.err_type {
             "invalid_request_error" => 400,
+            "conflict_error" => 409,
             _ => 500,
         }
     }
