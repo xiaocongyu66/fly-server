@@ -93,7 +93,9 @@ pub fn probe() -> Vec<GpuProbe> {
     static CACHE: std::sync::OnceLock<Vec<GpuProbe>> = std::sync::OnceLock::new();
     CACHE
         .get_or_init(|| {
-            let out = Vec::new();
+            // `mut` is needed only when a backend feature is compiled in
+            #[allow(unused_mut)]
+            let mut out = Vec::new();
             #[cfg(feature = "gpu")]
             if let Some(p) = wgpu_backend::probe() {
                 out.push(p);
