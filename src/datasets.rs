@@ -86,6 +86,15 @@ pub enum Status {
     Error,
 }
 
+/// Published spec of one upstream file: expected size and md5 so a model
+/// download service can verify integrity without contacting GCS itself.
+#[derive(Debug, Clone, Serialize)]
+pub struct FileSpec {
+    pub name: &'static str,
+    pub bytes: u64,
+    pub md5: &'static str,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TierState {
     pub tier: String,
@@ -94,17 +103,33 @@ pub struct TierState {
     pub total: u64,
     pub error: Option<String>,
     pub hint: Option<String>,
+    /// Per-file expectations from the upstream manifest (md5 may be empty
+    /// for the lite tier, whose sizes are estimates).
+    pub files: Vec<FileSpec>,
+    /// md5 of the compiled `<tier>.flybin`, set when the artifact is
+    /// written or found complete at boot.
+    pub artifact_md5: Option<String>,
 }
 
 impl TierState {
-    fn new(tier: &str, total: u64) -> Self {
+    fn new(d: &DatasetDef) -> Self {
         Self {
-            tier: tier.to_string(),
+            tier: d.tier.to_string(),
             status: Status::Idle,
             downloaded: 0,
-            total,
+            total: d.total_bytes(),
             error: None,
             hint: None,
+            files: d
+                .files
+                .iter()
+                .map(|(remote, _, bytes, md5)| FileSpec {
+                    name: remote,
+                    bytes: *bytes,
+                    md5,
+                })
+                .collect(),
+            artifact_md5: None,
         }
     }
 }
@@ -118,7 +143,7 @@ impl DatasetStore {
     pub fn new(data_dir: PathBuf) -> Self {
         let mut states = HashMap::new();
         for d in DATASETS {
-            let mut st = TierState::new(d.tier, d.total_bytes());
+            let mut st = TierState::new(d);
             // check if any non-empty files exist in the tier directory
             let tier_dir = data_dir.join(d.tier);
             let has_files = std::fs::read_dir(&tier_dir)
@@ -153,6 +178,7 @@ impl DatasetStore {
                         .join("substrates")
                         .join("lite.flybin");
                     if flybin.exists() {
+                        st.artifact_md5 = file_md5(&flybin).ok();
                         st.status = Status::Compiled;
                         st.hint = Some("already compiled: lite.flybin".into());
                     } else {
@@ -169,6 +195,7 @@ impl DatasetStore {
                         .join(format!("{}.flybin", d.tier));
                     let weights_file = tier_dir.join(d.files[0].1);
                     if flybin.exists() {
+                        st.artifact_md5 = file_md5(&flybin).ok();
                         st.status = Status::Compiled;
                         st.hint = Some(format!(
                             "already compiled: {}",
@@ -378,6 +405,7 @@ impl DatasetStore {
                     crate::substrate::Quant::U8,
                 ) {
                     Ok(r) => {
+                        st.artifact_md5 = file_md5(&out).ok();
                         st.status = Status::Compiled;
                         st.hint = Some(format!(
                             "compiled: {} neurons / {} edges → lite.flybin",
@@ -426,9 +454,15 @@ impl DatasetStore {
         }
     }
 
-    pub fn mark_compiled(&self, tier: &str, report: &crate::substrate::CompileReport) {
+    pub fn mark_compiled(
+        &self,
+        tier: &str,
+        report: &crate::substrate::CompileReport,
+        artifact_md5: String,
+    ) {
         self.set(tier, |st| {
             st.status = Status::Compiled;
+            st.artifact_md5 = Some(artifact_md5);
             st.hint = Some(format!(
                 "compiled: {} neurons / {} edges → {}.flybin",
                 report.n_neurons, report.n_edges_aggregated, tier
@@ -458,7 +492,7 @@ impl DatasetStore {
 }
 
 /// md5 of a file as lowercase hex (streamed, bounded memory).
-fn file_md5(path: &std::path::Path) -> Result<String, String> {
+pub(crate) fn file_md5(path: &std::path::Path) -> Result<String, String> {
     use md5::Digest;
     use std::io::Read;
     let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;

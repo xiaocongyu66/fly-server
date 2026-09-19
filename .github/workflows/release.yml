@@ -34,27 +34,64 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            arch: x86_64
+            target: x86_64-unknown-linux-gnu
+            artifact: fly-server-x86_64-linux.tar.gz
           - os: ubuntu-24.04-arm
-            arch: aarch64
+            target: aarch64-unknown-linux-gnu
+            artifact: fly-server-aarch64-linux.tar.gz
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: fly-server-aarch64-macos.tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: fly-server-x86_64-windows.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: release-bundle-${{ matrix.os }}
-      - run: cargo build -p fly-server --release
+          key: release-bundle-${{ matrix.target }}
+      - run: cargo build -p fly-server --release --target ${{ matrix.target }}
       - uses: actions/download-artifact@v4
         with:
           name: fly-admin-web
           path: admin-dist
-      - name: Package
+      - name: Package (unix)
+        if: runner.os != 'Windows'
         run: |
           mkdir -p pkg
-          cp target/release/fly-server pkg/
+          cp target/${{ matrix.target }}/release/fly-server pkg/
           cp -r admin-dist pkg/admin-dist
-          tar czf fly-server-${{ matrix.arch }}-linux.tar.gz -C pkg .
+          tar czf ${{ matrix.artifact }} -C pkg .
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path pkg | Out-Null
+          Copy-Item target/${{ matrix.target }}/release/fly-server.exe pkg/
+          Copy-Item -Recurse admin-dist pkg/admin-dist
+          Compress-Archive -Path pkg/* -DestinationPath ${{ matrix.artifact }}
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $f = "${{ matrix.artifact }}"
+          if ($IsWindows -or $env:RUNNER_OS -eq 'Windows') {
+            $h = (Get-FileHash $f -Algorithm MD5).Hash.ToLower()
+            $s = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+          } else {
+            $h = (md5sum $f | ForEach-Object { ($_ -split '\s+')[0] })
+            $s = (sha256sum $f | ForEach-Object { ($_ -split '\s+')[0] })
+          }
+          "$h  $f" | Out-File -NoNewline -Encoding ascii "$f.md5"
+          "`n" | Out-File -Append -NoNewline -Encoding ascii "$f.md5"
+          "$s  $f" | Out-File -NoNewline -Encoding ascii "$f.sha256"
+          "`n" | Out-File -Append -NoNewline -Encoding ascii "$f.sha256"
       - uses: softprops/action-gh-release@v2
         with:
-          files: fly-server-${{ matrix.arch }}-linux.tar.gz
+          files: |
+            ${{ matrix.artifact }}
+            ${{ matrix.artifact }}.md5
+            ${{ matrix.artifact }}.sha256

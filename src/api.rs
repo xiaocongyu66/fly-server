@@ -92,10 +92,11 @@ fn activate_tier(
 
     // Both MaleCNS tiers share the same body ids, so standard's annotation
     // files enrich the full tier too (full's own download has none).
-    let anno_path = datasets.tier_dir("standard").join("body_annotations.feather");
+    let anno_path = datasets
+        .tier_dir("standard")
+        .join("body_annotations.feather");
     let nt_path = datasets.tier_dir("standard").join("body_nt.feather");
-    let annotations =
-        crate::substrate::feather::feather_complete(&anno_path).then_some(anno_path);
+    let annotations = crate::substrate::feather::feather_complete(&anno_path).then_some(anno_path);
     let nt = crate::substrate::feather::feather_complete(&nt_path).then_some(nt_path);
     let out_path = substrates_dir.join(format!("{tier}.flybin"));
     let mgr = Arc::clone(mgr);
@@ -111,13 +112,26 @@ fn activate_tier(
             annotations_path: annotations.as_deref(),
             nt_path: nt.as_deref(),
         };
-        match crate::substrate::compile_malecns(&spec, &out_path, crate::substrate::Quant::U8) {
+        match crate::substrate::compile_malecns(&spec, &out_path, crate::substrate::Quant::F32) {
             Ok(report) => {
                 datasets.set_hint(&tier_s, "compiling: loading substrate");
                 match crate::substrate::load(&out_path) {
                     Ok(sub) => {
+                        // publish the artifact hash: `<tier>.flybin.md5`
+                        // sidecar (md5sum format) + status field, so a
+                        // model download service can verify the compiled
+                        // substrate without recompiling
+                        let md5 = crate::datasets::file_md5(&out_path)
+                            .unwrap_or_else(|_| "unavailable".into());
+                        let sidecar = out_path.with_extension("flybin.md5");
+                        if let Some(name) = out_path.file_name() {
+                            let _ = std::fs::write(
+                                &sidecar,
+                                format!("{md5}  {}\n", name.to_string_lossy()),
+                            );
+                        }
                         mgr.reload_substrate(Arc::new(sub), tier_s.clone());
-                        datasets.mark_compiled(&tier_s, &report);
+                        datasets.mark_compiled(&tier_s, &report, md5);
                     }
                     Err(e) => datasets.mark_compile_error(&tier_s, &e.to_string()),
                 }

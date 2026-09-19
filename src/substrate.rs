@@ -407,6 +407,49 @@ pub fn compile_malecns(
         Ok(())
     })?;
 
+    // ---- pass 3: aggregate duplicate (pre, post) rows (F32 only) ----------
+    // Synapse-level tables (the full tier) emit one row per synapse, so a
+    // partner pair appears once per synapse; the engine wants a single edge
+    // per pair with weight = synapse count. The deduped segment of every
+    // row is never longer than the raw segment, so compaction in place
+    // with a left-to-right write cursor is safe. The u8 path skips this —
+    // it is the compact legacy mode and keeps one edge per row.
+    let mut n_edges = n_edges;
+    if let Weights::F32(v) = &mut weights {
+        eprintln!("malecns: pass 3 aggregating duplicate targets");
+        let mut agg_indptr = vec![0u64; n + 1];
+        let mut write = 0usize;
+        for r in 0..n {
+            let s = indptr[r] as usize;
+            let e = indptr[r + 1] as usize;
+            if s < e {
+                let mut pairs: Vec<(u32, f32)> = Vec::with_capacity(e - s);
+                for k in s..e {
+                    pairs.push((indices[k], v[k]));
+                }
+                pairs.sort_unstable_by_key(|p| p.0);
+                let mut k = 0;
+                while k < pairs.len() {
+                    let t = pairs[k].0;
+                    let mut wsum = 0f32;
+                    while k < pairs.len() && pairs[k].0 == t {
+                        wsum += pairs[k].1;
+                        k += 1;
+                    }
+                    indices[write] = t;
+                    v[write] = wsum;
+                    write += 1;
+                }
+            }
+            agg_indptr[r + 1] = write as u64;
+        }
+        indices.truncate(write);
+        v.truncate(write);
+        indptr = agg_indptr;
+        n_edges = write as u64;
+        eprintln!("malecns: pass 3 done: {n_edges} aggregate edges (from {raw_rows} raw rows)");
+    }
+
     // ---- metadata ----------------------------------------------------------
     eprintln!("malecns: pass 2 done, loading metadata");
     let has_metadata = metadata.is_some();
@@ -631,10 +674,28 @@ fn table_index(table: &mut Vec<String>, s: &str) -> u32 {
     table.len() as u32 - 1
 }
 
+/// A selector field that named something this substrate does not know.
+/// Treating "unknown" the same as "absent" would silently match the whole
+/// universe (e.g. an LLM hallucinating a region name).
+#[derive(Debug)]
+pub struct UnknownSelector {
+    pub field: &'static str,
+    pub value: String,
+}
+
+impl std::fmt::Display for UnknownSelector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown {}: `{}`", self.field, self.value)
+    }
+}
+
 impl Substrate {
     /// Resolve a selector against this substrate; returns matched neuron
-    /// indices (unbounded — caller applies its own limit).
-    pub fn select(&self, sel: &NeuronSelector) -> Vec<u32> {
+    /// indices (unbounded — caller applies its own limit). Explicit root
+    /// ids are never filtered or truncated; unknown ids among them are
+    /// skipped. A named region/cell_type/nt_type that the substrate has
+    /// never heard of is an error, not an empty match.
+    pub fn select(&self, sel: &NeuronSelector) -> Result<Vec<u32>, UnknownSelector> {
         let n = self.n_neurons();
         let mut matched: Vec<u32> = Vec::new();
         if !sel.ids.is_empty() {
@@ -649,29 +710,29 @@ impl Substrate {
                     matched.push(i);
                 }
             }
-            return matched;
+            return Ok(matched);
         }
-        let region_idx = sel.region.as_ref().and_then(|r| {
-            self.header
-                .string_tables
-                .regions
+        let find = |table: &[String], name: &str, field: &'static str| {
+            table
                 .iter()
-                .position(|t| t.eq_ignore_ascii_case(r))
-        });
-        let ct_idx = sel.cell_type.as_ref().and_then(|c| {
-            self.header
-                .string_tables
-                .cell_types
-                .iter()
-                .position(|t| t.eq_ignore_ascii_case(c))
-        });
-        let nt_idx = sel.nt_type.as_ref().and_then(|t| {
-            self.header
-                .string_tables
-                .nt_types
-                .iter()
-                .position(|x| x.eq_ignore_ascii_case(t))
-        });
+                .position(|t| t.eq_ignore_ascii_case(name))
+                .ok_or_else(|| UnknownSelector {
+                    field,
+                    value: name.to_string(),
+                })
+        };
+        let region_idx = match sel.region.as_deref() {
+            Some(r) => Some(find(&self.header.string_tables.regions, r, "region")?),
+            None => None,
+        };
+        let ct_idx = match sel.cell_type.as_deref() {
+            Some(c) => Some(find(&self.header.string_tables.cell_types, c, "cell_type")?),
+            None => None,
+        };
+        let nt_idx = match sel.nt_type.as_deref() {
+            Some(t) => Some(find(&self.header.string_tables.nt_types, t, "nt_type")?),
+            None => None,
+        };
         if region_idx.is_some() || ct_idx.is_some() || nt_idx.is_some() {
             for i in 0..n {
                 if let Some(ri) = region_idx {
@@ -695,7 +756,7 @@ impl Substrate {
             // no filter: match every neuron (caller stride-samples via limit)
             matched.extend(0..n as u32);
         }
-        matched
+        Ok(matched)
     }
 
     pub fn selected_details(&self, idxs: &[u32]) -> Vec<SelectedNeuron> {
@@ -871,6 +932,44 @@ mod malecns_tests {
             .collect();
         assert_eq!(got, vec![(100, 7.0)]);
         // row 2 = id 300: no outgoing
+        assert_eq!(sub.outgoing(2).count(), 0);
+    }
+
+    #[test]
+    fn aggregates_duplicate_synapse_rows_f32() {
+        let out = std::env::temp_dir().join("fly-malecns-test-out-agg.flybin");
+        let report = compile_malecns(
+            &MaleCnsSpec {
+                weights_path: &weights_feather_named("weights-agg.feather", false),
+                pre_col: "body_pre",
+                post_col: "body_post",
+                weight_col: Some("weight"),
+                annotations_path: None,
+                nt_path: None,
+            },
+            &out,
+            Quant::F32,
+        )
+        .unwrap();
+        // fixture rows (100→200 w3, 100→300 w300, 100→200 w2, 200→100 w7):
+        // pass 3 merges the two 100→200 rows into one edge of weight 5
+        assert_eq!(report.n_neurons, 3);
+        assert_eq!(report.n_edges_aggregated, 3);
+        assert_eq!(report.total_synapses, 312);
+
+        let sub = crate::substrate::load(&out).unwrap();
+        assert_eq!(sub.header.n_edges, 3);
+        let mut got: Vec<(u64, f32)> = sub
+            .outgoing(0)
+            .map(|(i, w)| (sub.root_ids[i as usize], w))
+            .collect();
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(got, vec![(200, 5.0), (300, 300.0)]);
+        let got: Vec<(u64, f32)> = sub
+            .outgoing(1)
+            .map(|(i, w)| (sub.root_ids[i as usize], w))
+            .collect();
+        assert_eq!(got, vec![(100, 7.0)]);
         assert_eq!(sub.outgoing(2).count(), 0);
     }
 

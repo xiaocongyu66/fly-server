@@ -18,6 +18,18 @@ use crate::error::{ApiError, ApiResult};
 use crate::substrate::Substrate;
 use crate::types::*;
 
+/// Map an unknown selector name to a 400 the client (or the LLM driving
+/// tool calls) can act on instead of silently matching the whole universe.
+fn selector_unknown_error(e: crate::substrate::UnknownSelector) -> ApiError {
+    let param: &'static str = match e.field {
+        "region" => "region",
+        "cell_type" => "cell_type",
+        "nt_type" => "nt_type",
+        _ => "target",
+    };
+    ApiError::invalid_request("unknown_selector", e.to_string(), Some(param))
+}
+
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn unix_secs() -> u64 {
@@ -189,7 +201,10 @@ impl SessionManager {
 
     /// Resolve a selector directly against the substrate (no session).
     pub fn query(&self, sel: &crate::types::NeuronSelector) -> ApiResult<serde_json::Value> {
-        let matched = self.substrate()?.select(sel);
+        let matched = self
+            .substrate()?
+            .select(sel)
+            .map_err(selector_unknown_error)?;
         let count = matched.len() as u64;
         let limit = (sel.limit.unwrap_or(200000) as usize).min(matched.len());
         // even stride sampling when the match set exceeds the limit
@@ -393,65 +408,20 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Resolve a NeuronSelector into dense neuron indices.
-    fn resolve_selector(&self, sel: &NeuronSelector) -> Vec<u32> {
+    /// Resolve a NeuronSelector into dense neuron indices. Unknown selector
+    /// names are an error; an empty substrate resolves to nothing.
+    fn resolve_selector(&self, sel: &NeuronSelector) -> ApiResult<Vec<u32>> {
         let sub = match self.substrate.read().unwrap().as_ref() {
             Some(s) => s.clone(),
-            None => return Vec::new(),
+            None => return Ok(Vec::new()),
         };
-        let n = sub.n_neurons();
-        let mut out: Vec<u32> = Vec::new();
-        if !sel.ids.is_empty() {
-            for root in &sel.ids {
-                if let Ok(i) = sub.root_ids.binary_search(root) {
-                    out.push(i as u32);
-                }
-            }
-            return out; // explicit ids are never truncated
+        let mut out = sub.select(sel).map_err(selector_unknown_error)?;
+        if sel.ids.is_empty() {
+            // explicit ids are never truncated; name filters are
+            let cap = sel.limit.map(|l| l as usize).unwrap_or(256);
+            out.truncate(cap);
         }
-        {
-            let region_idx = sel.region.as_ref().and_then(|r| {
-                sub.header
-                    .string_tables
-                    .regions
-                    .iter()
-                    .position(|t| t.eq_ignore_ascii_case(r))
-            });
-            let ct_idx = sel.cell_type.as_ref().and_then(|c| {
-                sub.header
-                    .string_tables
-                    .cell_types
-                    .iter()
-                    .position(|t| t.eq_ignore_ascii_case(c))
-            });
-            let nt_idx = sel.nt_type.as_ref().and_then(|t| {
-                sub.header
-                    .string_tables
-                    .nt_types
-                    .iter()
-                    .position(|x| x.eq_ignore_ascii_case(t))
-            });
-            if region_idx.is_some() || ct_idx.is_some() || nt_idx.is_some() {
-                for i in 0..n {
-                    if region_idx.is_some() && sub.region[i] as usize != region_idx.unwrap() {
-                        continue;
-                    }
-                    if ct_idx.is_some() && sub.cell_type[i] as usize != ct_idx.unwrap() {
-                        continue;
-                    }
-                    if nt_idx.is_some() && sub.nt_type[i] as usize != nt_idx.unwrap() {
-                        continue;
-                    }
-                    out.push(i as u32);
-                }
-            }
-        }
-        if let Some(limit) = sel.limit {
-            out.truncate(limit as usize);
-        } else {
-            out.truncate(256);
-        }
-        out
+        Ok(out)
     }
 
     pub fn observe(&self, id: &str, req: ObserveRequest) -> ApiResult<SessionItem> {
@@ -459,7 +429,7 @@ impl SessionManager {
         let s = sessions
             .get_mut(id)
             .ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
-        let idx = self.resolve_selector(&req.target);
+        let idx = self.resolve_selector(&req.target)?;
         if idx.is_empty() {
             return Err(ApiError::invalid_request(
                 "empty_selection",
