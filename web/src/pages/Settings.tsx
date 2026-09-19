@@ -5,7 +5,17 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+
+type GpuMode = "auto" | "wgpu" | "cuda" | "off"
+type GpuProbe = { backend: string; device: string }
 
 type EngCfg = {
   dt_ms: number
@@ -14,6 +24,7 @@ type EngCfg = {
   weight_scale: number
   input_gain: number
   v_thresh: number
+  use_gpu?: GpuMode
 }
 
 export function Settings() {
@@ -21,10 +32,13 @@ export function Settings() {
   const [cfg, setCfg] = useState<EngCfg | null>(null)
   const [saved, setSaved] = useState(false)
   const [err, setErr] = useState("")
+  const [gpuProbes, setGpuProbes] = useState<GpuProbe[]>([])
 
   const load = useCallback(async () => {
     try {
       setCfg(await api.get("/v1/admin/settings"))
+      const g = await api.get("/v1/admin/gpu")
+      setGpuProbes(g.available ?? [])
     } catch (e: any) {
       setErr(e.message)
     }
@@ -62,6 +76,34 @@ export function Settings() {
               checked={cfg.use_simd}
               onCheckedChange={(v) => setCfg({ ...cfg, use_simd: v })}
             />
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="gpu">{t("settings.gpu")}</Label>
+              <p className="text-xs text-muted-foreground">
+                {gpuProbes.length
+                  ? gpuProbes.map((g) => `${g.backend}: ${g.device}`).join(" · ")
+                  : t("settings.gpu_none")}
+              </p>
+            </div>
+            <Select
+              value={cfg.use_gpu ?? "off"}
+              onValueChange={(v) => setCfg({ ...cfg, use_gpu: v as GpuMode })}
+            >
+              <SelectTrigger id="gpu" className="w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="off">CPU</SelectItem>
+                <SelectItem value="auto">Auto</SelectItem>
+                {gpuProbes.some((g) => g.backend === "wgpu") && (
+                  <SelectItem value="wgpu">wgpu</SelectItem>
+                )}
+                {gpuProbes.some((g) => g.backend === "cuda") && (
+                  <SelectItem value="cuda">CUDA</SelectItem>
+                )}
+              </SelectContent>
+            </Select>
           </div>
           <div className="flex items-center justify-between">
             <Label htmlFor="threads">{t("settings.threads")}</Label>

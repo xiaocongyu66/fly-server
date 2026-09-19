@@ -306,8 +306,10 @@ dependencies = [
 name = "fly-server"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "flate2",
  "getrandom",
+ "libloading",
  "lz4_flex",
  "md-5",
  "pollster",

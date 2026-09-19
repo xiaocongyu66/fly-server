@@ -360,6 +360,10 @@ fn route_authed(
                     Err(e) => json_err(&ApiError::not_found(format!("substrate load failed: {e}"))),
                 }
             }
+            ("GET", Some("gpu"), None, _) => json_ok(serde_json::json!({
+                "available": crate::engine::gpu::probe(),
+                "mode": mgr.get_engine_config().use_gpu,
+            })),
             ("GET", Some("memory"), None, _) => json_ok(mgr.memory_stats()),
             ("POST", Some("memory"), Some("gc"), None) => json_ok(mgr.force_gc()),
             ("POST", Some("datasets"), Some(tier), Some("download")) => {

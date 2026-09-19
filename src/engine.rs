@@ -46,6 +46,9 @@ pub struct EngineConfig {
     pub use_simd: bool,
     /// Worker threads for the tick loop (1 = serial, bit-exact replays).
     pub n_threads: usize,
+    /// GPU backend selection (auto probes wgpu/cuda, falls back to CPU).
+    #[serde(default)]
+    pub use_gpu: gpu::GpuMode,
 }
 
 impl Default for EngineConfig {
@@ -63,6 +66,7 @@ impl Default for EngineConfig {
             stim_current: 30.0,
             use_simd: true,
             n_threads: 1,
+            use_gpu: gpu::GpuMode::Off,
         }
     }
 }
@@ -136,6 +140,10 @@ pub struct Engine {
     g_exc: Vec<Mutex<Vec<f32>>>,
     g_inh: Vec<Mutex<Vec<f32>>>,
     spikes_last: u32,
+    gpu: Option<Box<dyn gpu::GpuBackend>>,
+    gpu_built: gpu::GpuMode,
+    is_inhibitory: Vec<bool>,
+    v_mirror: Vec<f32>,
 }
 
 /// Per-thread scratch for the parallel scatter phase (owned by the worker).
@@ -195,6 +203,10 @@ impl Engine {
             .iter()
             .map(|&t| table[t as usize])
             .collect();
+        let is_inhibitory: Vec<bool> = polarity
+            .iter()
+            .map(|p| matches!(p, Polarity::Inhibitory))
+            .collect();
         let mk = || {
             (0..n_threads)
                 .map(|_| Mutex::new(vec![0.0f32; chunk_len]))
@@ -213,6 +225,10 @@ impl Engine {
             g_exc: mk(),
             g_inh: mk(),
             spikes_last: 0,
+            gpu: None,
+            gpu_built: gpu::GpuMode::Off,
+            is_inhibitory,
+            v_mirror: Vec::new(),
         }
     }
 
@@ -222,6 +238,9 @@ impl Engine {
 
     /// Inject current into specific neurons (sensory stimulus, pain, reward).
     pub fn inject(&mut self, neurons: &[u32], current: f32) {
+        if let Some(b) = self.gpu.as_mut() {
+            b.inject(neurons, current);
+        }
         for &i in neurons {
             let (c, l) = self.locate(i as usize);
             if let Ok(mut ch) = self.v[c].try_lock() {
@@ -246,6 +265,9 @@ impl Engine {
 
     /// Membrane potential of neuron `i` (for readout rate computation).
     pub fn membrane(&self, i: usize) -> f32 {
+        if self.gpu.is_some() {
+            return self.v_mirror.get(i).copied().unwrap_or(0.0);
+        }
         let (c, l) = self.locate(i);
         self.v[c]
             .lock()
@@ -268,6 +290,63 @@ impl Engine {
             mean_v: 0.0,
         };
         let mut last = current;
+        self.ensure_gpu();
+        if self.gpu.is_some() {
+            let params = self.gpu_params();
+            let mut ran = 0u32;
+            while ran < steps {
+                let step_res = match self.gpu.as_mut() {
+                    Some(b) => b.tick(&params),
+                    None => break,
+                };
+                match step_res {
+                    Ok(t) => {
+                        self.last_spiked = t.spikes;
+                        self.spikes_last = self.last_spiked.len() as u32;
+                        self.tick += 1;
+                        self.t_ms += self.cfg.dt_ms;
+                        let n = self.substrate.n_neurons();
+                        if self.v_mirror.len() != n {
+                            self.v_mirror.resize(n, 0.0);
+                        }
+                        let read_ok = match self.gpu.as_mut() {
+                            Some(b) => b.read_v(&mut self.v_mirror).is_ok(),
+                            None => false,
+                        };
+                        if !read_ok {
+                            eprintln!("gpu: read_v failed, falling back to CPU");
+                            self.gpu = None;
+                            break;
+                        }
+                        let mean_v = if n > 0 {
+                            self.v_mirror.iter().sum::<f32>() / n as f32
+                        } else {
+                            0.0
+                        };
+                        let r = TickReport {
+                            tick: self.tick,
+                            t_ms: self.t_ms,
+                            n_spikes: self.spikes_last,
+                            mean_v,
+                        };
+                        per_tick(&r, self);
+                        last = r;
+                        ran += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("gpu: tick failed, falling back to CPU: {e}");
+                        self.gpu = None;
+                        break;
+                    }
+                }
+            }
+            if self.gpu.is_some() && ran == steps {
+                return last;
+            }
+            // GPU dropped mid-run (or partially ran): remaining steps take
+            // the CPU paths below. Backend switches reset simulation state
+            // by design.
+        }
         if self.cfg.n_threads <= 1 {
             for _ in 0..steps {
                 let r = self.tick_one_serial();
@@ -278,6 +357,67 @@ impl Engine {
             last = self.run_ticks_parallel(steps, per_tick);
         }
         last
+    }
+
+    fn gpu_params(&self) -> gpu::TickParams {
+        let c = &self.cfg;
+        gpu::TickParams {
+            decay_exc: (-c.dt_ms / c.tau_exc_ms).exp(),
+            decay_inh: (-c.dt_ms / c.tau_inh_ms).exp(),
+            a: 1.0 - (-c.dt_ms / c.tau_mem_ms).exp(),
+            v_rest: c.v_rest,
+            input_gain: c.input_gain,
+            v_thresh: c.v_thresh,
+            v_reset: c.v_reset,
+            weight_scale: c.weight_scale,
+        }
+    }
+
+    /// (Re)build the GPU backend when `cfg.use_gpu` changed. On success the
+    /// CPU-side membrane state (accumulated injections) is uploaded so the
+    /// device continues from where the CPU left off.
+    fn ensure_gpu(&mut self) {
+        if self.cfg.use_gpu == self.gpu_built {
+            return;
+        }
+        self.gpu = match gpu::select_backend(
+            self.cfg.use_gpu,
+            &self.substrate,
+            &self.is_inhibitory,
+            &self.cfg,
+        ) {
+            Ok(mut b) => {
+                let n = self.substrate.n_neurons();
+                let mut v = vec![0f32; n];
+                for (c, chunk) in self.v.iter().enumerate() {
+                    if let Ok(ch) = chunk.lock() {
+                        let base = c * self.chunk_len;
+                        for (l, &val) in ch.iter().enumerate() {
+                            if base + l < n {
+                                v[base + l] = val;
+                            }
+                        }
+                    }
+                }
+                match b.write_state(&v) {
+                    Ok(()) => {
+                        eprintln!("gpu: backend {} active on {}", b.name(), b.device());
+                        Some(b)
+                    }
+                    Err(e) => {
+                        eprintln!("gpu: write_state failed, staying on CPU: {e}");
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                if self.cfg.use_gpu != gpu::GpuMode::Off {
+                    eprintln!("gpu: no backend ({e}) — using CPU");
+                }
+                None
+            }
+        };
+        self.gpu_built = self.cfg.use_gpu;
     }
 
     // ---- serial path (n_threads == 1): bit-exact replays ----
