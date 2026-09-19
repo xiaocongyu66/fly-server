@@ -74,17 +74,31 @@ jobs:
           Copy-Item target/${{ matrix.target }}/release/fly-server.exe pkg/
           Copy-Item -Recurse admin-dist pkg/admin-dist
           Compress-Archive -Path pkg/* -DestinationPath ${{ matrix.artifact }}
-      - name: Checksum
+      - name: Checksum (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="${{ matrix.artifact }}"
+          case "$(uname -s)" in
+            Darwin)
+              md5=$(md5 -q "$f")
+              sha=$(shasum -a 256 "$f" | awk '{print $1}')
+              ;;
+            *)
+              md5=$(md5sum "$f" | awk '{print $1}')
+              sha=$(sha256sum "$f" | awk '{print $1}')
+              ;;
+          esac
+          printf '%s  %s\n' "$md5" "$f" > "$f.md5"
+          printf '%s  %s\n' "$sha" "$f" > "$f.sha256"
+      - name: Checksum (windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $f = "${{ matrix.artifact }}"
-          if ($IsWindows -or $env:RUNNER_OS -eq 'Windows') {
-            $h = (Get-FileHash $f -Algorithm MD5).Hash.ToLower()
-            $s = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
-          } else {
-            $h = (md5sum $f | ForEach-Object { ($_ -split '\s+')[0] })
-            $s = (sha256sum $f | ForEach-Object { ($_ -split '\s+')[0] })
-          }
+          $h = (Get-FileHash $f -Algorithm MD5).Hash.ToLower()
+          $s = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
           "$h  $f" | Out-File -NoNewline -Encoding ascii "$f.md5"
           "`n" | Out-File -Append -NoNewline -Encoding ascii "$f.md5"
           "$s  $f" | Out-File -NoNewline -Encoding ascii "$f.sha256"
