@@ -405,7 +405,18 @@ impl DatasetStore {
                     crate::substrate::Quant::U8,
                 ) {
                     Ok(r) => {
-                        st.artifact_md5 = file_md5(&out).ok();
+                        // same hash publication as the malecns compile path:
+                        // md5sum-format sidecar next to the artifact
+                        if let Ok(md5) = file_md5(&out) {
+                            let sidecar = out.with_extension("flybin.md5");
+                            if let Some(name) = out.file_name() {
+                                let _ = std::fs::write(
+                                    &sidecar,
+                                    format!("{md5}  {}\n", name.to_string_lossy()),
+                                );
+                            }
+                            st.artifact_md5 = Some(md5);
+                        }
                         st.status = Status::Compiled;
                         st.hint = Some(format!(
                             "compiled: {} neurons / {} edges → lite.flybin",
