@@ -90,9 +90,13 @@ fn activate_tier(
         return json_ok(serde_json::json!({"tier": tier, "status": e}));
     }
 
+    // Both MaleCNS tiers share the same body ids, so standard's annotation
+    // files enrich the full tier too (full's own download has none).
+    let anno_path = datasets.tier_dir("standard").join("body_annotations.feather");
+    let nt_path = datasets.tier_dir("standard").join("body_nt.feather");
     let annotations =
-        (tier == "standard").then(|| datasets.tier_dir(tier).join("body_annotations.feather"));
-    let nt = (tier == "standard").then(|| datasets.tier_dir(tier).join("body_nt.feather"));
+        crate::substrate::feather::feather_complete(&anno_path).then_some(anno_path);
+    let nt = crate::substrate::feather::feather_complete(&nt_path).then_some(nt_path);
     let out_path = substrates_dir.join(format!("{tier}.flybin"));
     let mgr = Arc::clone(mgr);
     let datasets = Arc::clone(datasets);
