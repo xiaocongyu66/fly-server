@@ -119,7 +119,8 @@ pub fn select_backend(
         GpuMode::Wgpu => {
             #[cfg(feature = "gpu")]
             {
-                wgpu_backend::init(sub, is_inhibitory, cfg)
+                // explicit selection: software renderers (llvmpipe) allowed
+                wgpu_backend::init_with(sub, is_inhibitory, true, cfg)
                     .map(|b| Box::new(b) as Box<dyn GpuBackend>)
             }
             #[cfg(not(feature = "gpu"))]
@@ -132,12 +133,16 @@ pub fn select_backend(
         GpuMode::Auto => {
             #[cfg(feature = "gpu")]
             {
-                if let Ok(b) = wgpu_backend::init(sub, is_inhibitory, cfg) {
+                // auto: hardware only — software Vulkan (llvmpipe) is a
+                // validation tool, not a production backend, and can take
+                // the process down on flaky stacks (native segfaults)
+                if let Ok(b) = wgpu_backend::init_with(sub, is_inhibitory, false, cfg) {
                     return Ok(Box::new(b));
                 }
             }
             Err(
-                "no GPU backend available (wgpu: no adapter; cuda: not built in or no driver)"
+                "no hardware GPU backend available (software renderers are skipped in \
+                 auto mode; select wgpu explicitly to use them)"
                     .into(),
             )
         }

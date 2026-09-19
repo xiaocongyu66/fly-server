@@ -114,19 +114,35 @@ pub fn init(
     is_inhibitory: &[bool],
     _cfg: &crate::engine::EngineConfig,
 ) -> Result<WgpuBackend, String> {
+    init_with(sub, is_inhibitory, true, _cfg)
+}
+
+/// `allow_software = false` skips CPU-type renderers (llvmpipe) — used by
+/// `GpuMode::Auto` so proot devices stay on the safe CPU path; an explicit
+/// `wgpu` selection opts in (shader math is validated, crashes are driver-
+/// side and can take the process down).
+pub fn init_with(
+    sub: &Substrate,
+    is_inhibitory: &[bool],
+    allow_software: bool,
+    _cfg: &crate::engine::EngineConfig,
+) -> Result<WgpuBackend, String> {
     let instance = wgpu::Instance::default();
     // hardware adapters first, software (llvmpipe) as last resort
-    let mut adapters = instance.enumerate_adapters(wgpu::Backends::VULKAN);
+    let mut adapters: Vec<wgpu::Adapter> = instance.enumerate_adapters(wgpu::Backends::VULKAN);
     adapters.sort_by_key(|a| {
         matches!(
             a.get_info().device_type,
             wgpu::DeviceType::Cpu | wgpu::DeviceType::Other
         )
     });
+    if !allow_software {
+        adapters.retain(|a| a.get_info().device_type != wgpu::DeviceType::Cpu);
+    }
     let adapter = adapters
         .into_iter()
         .next()
-        .ok_or("no Vulkan adapter reachable")?;
+        .ok_or("no suitable Vulkan adapter (hardware GPU required)")?;
     let info = adapter.get_info();
     let (device, queue) = block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {

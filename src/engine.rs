@@ -295,8 +295,16 @@ impl Engine {
             let params = self.gpu_params();
             let mut ran = 0u32;
             while ran < steps {
+                // llvmpipe and flaky drivers can panic (or worse) inside a
+                // dispatch; contain it so the server falls back to CPU
+                // instead of dying with the session thread
                 let step_res = match self.gpu.as_mut() {
-                    Some(b) => b.tick(&params),
+                    Some(b) => {
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| b.tick(&params)))
+                            .unwrap_or_else(|_| {
+                                Err("gpu panic (driver crash) — falling back to CPU".into())
+                            })
+                    }
                     None => break,
                 };
                 match step_res {
@@ -310,7 +318,13 @@ impl Engine {
                             self.v_mirror.resize(n, 0.0);
                         }
                         let read_ok = match self.gpu.as_mut() {
-                            Some(b) => b.read_v(&mut self.v_mirror).is_ok(),
+                            Some(b) => {
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    b.read_v(&mut self.v_mirror)
+                                }))
+                                .map(|r| r.is_ok())
+                                .unwrap_or(false)
+                            }
                             None => false,
                         };
                         if !read_ok {
