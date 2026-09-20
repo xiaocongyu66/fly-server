@@ -303,32 +303,44 @@ pub(crate) fn b64(data: &[u8]) -> String {
 fn write_response(stream: &mut TcpStream, resp: &HttpResponse) -> std::io::Result<()> {
     match &resp.body {
         Body::Ws(rx) => {
+            // handshake is ours (already validated + accept computed);
+            // framing below is standard tokio-tungstenite
             let accept = resp.ws_accept.clone().unwrap_or_default();
             let head = format!(
                 "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
             );
             stream.write_all(head.as_bytes())?;
             stream.flush()?;
-            // server->client text frames: FIN|opcode 0x81, no mask
-            for msg in rx {
-                let payload = msg.as_bytes();
-                let mut frame = vec![0x81u8];
-                let len = payload.len();
-                if len < 126 {
-                    frame.push(len as u8);
-                } else if len <= u16::MAX as usize {
-                    frame.push(126);
-                    frame.extend_from_slice(&(len as u16).to_be_bytes());
-                } else {
-                    frame.push(127);
-                    frame.extend_from_slice(&(len as u64).to_be_bytes());
+            let std_stream = stream.try_clone()?;
+            static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+            let rt = RT.get_or_init(|| {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                    .expect("tokio runtime")
+            });
+            rt.block_on(async move {
+                use futures_util::{SinkExt, StreamExt};
+                use tokio_tungstenite::tungstenite;
+                let Ok(tok) = tokio::net::TcpStream::from_std(std_stream) else {
+                    return;
+                };
+                let mut ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
+                    tok,
+                    tungstenite::protocol::Role::Server,
+                    None,
+                )
+                .await;
+                let (mut sink, mut incoming) = ws.split();
+                // drain incoming frames: answers pings, honors close
+                tokio::spawn(async move { while let Some(Ok(_)) = incoming.next().await {} });
+                while let Ok(msg) = rx.recv() {
+                    if sink.send(tungstenite::Message::text(msg)).await.is_err() {
+                        break;
+                    }
                 }
-                frame.extend_from_slice(payload);
-                if stream.write_all(&frame).is_err() {
-                    break;
-                }
-                stream.flush().ok();
-            }
+            });
             Ok(())
         }
         Body::Bytes(b) => {
