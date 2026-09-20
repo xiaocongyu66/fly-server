@@ -341,6 +341,9 @@ fn write_response(stream: &mut TcpStream, resp: &HttpResponse) -> std::io::Resul
                     }
                 }
             });
+            // the outer keep-alive loop still holds an aliased fd — close the
+            // socket so its read_request returns instead of blocking for ages
+            let _ = stream.shutdown(std::net::Shutdown::Both);
             Ok(())
         }
         Body::Bytes(b) => {
