@@ -326,7 +326,7 @@ fn write_response(stream: &mut TcpStream, resp: &HttpResponse) -> std::io::Resul
                 let Ok(tok) = tokio::net::TcpStream::from_std(std_stream) else {
                     return;
                 };
-                let mut ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
+                let ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
                     tok,
                     tungstenite::protocol::Role::Server,
                     None,

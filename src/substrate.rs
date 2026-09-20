@@ -191,6 +191,7 @@ pub fn compile_flywire(
                 Quant::F32 => 1,
                 Quant::U8 => 2,
             },
+            weights_f32: quant == Quant::F32,
             n_neurons: n as u32,
             n_edges,
             source: format!("FlyWire v783 Princeton dump ({})", data_dir.display()),
@@ -207,6 +208,7 @@ pub fn compile_flywire(
         region,
         cell_type,
         nt_type,
+        positions: Vec::new(),
     };
     eprintln!("malecns: writing {}", out_path.display());
     flybin::write_flybin(out_path, &substrate)?;
@@ -478,6 +480,7 @@ pub fn compile_malecns(
     let substrate = Substrate {
         header: FlybinHeader {
             format_version: if use_u8 { 2 } else { 1 },
+            weights_f32: !use_u8,
             n_neurons: n as u32,
             n_edges,
             source: format!("MaleCNS v1.0 minconf-0.5 ({})", spec.weights_path.display()),
@@ -490,6 +493,7 @@ pub fn compile_malecns(
         region,
         cell_type,
         nt_type,
+        positions: Vec::new(),
     };
     eprintln!("malecns: writing {}", out_path.display());
     flybin::write_flybin(out_path, &substrate)?;

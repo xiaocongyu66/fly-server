@@ -428,6 +428,36 @@ impl SessionManager {
             None => return Ok(Vec::new()),
         };
         let mut out = sub.select(sel).map_err(selector_unknown_error)?;
+        // true retinotopy: azimuth filter on soma positions (v3 substrates)
+        if let (Some(az), false) = (sel.retina, sub.positions.is_empty()) {
+            if sel.ids.is_empty() {
+                let az = az.clamp(0.0, 1.0);
+                let n = sub.positions.len() / 3;
+                let (mut cx, mut cz) = (0.0f32, 0.0f32);
+                for i in 0..n {
+                    cx += sub.positions[i * 3];
+                    cz += sub.positions[i * 3 + 2];
+                }
+                cx /= n as f32;
+                cz /= n as f32;
+                let half = std::f32::consts::PI / 16.0; // ±11.25° window
+                out.retain(|&i| {
+                    let (x, z) = (
+                        sub.positions[i as usize * 3],
+                        sub.positions[i as usize * 3 + 2],
+                    );
+                    let dx = x - cx;
+                    let dz = z - cz;
+                    if dx.abs() < 1e-6 && dz.abs() < 1e-6 {
+                        return false;
+                    }
+                    let a = dz.atan2(dx).rem_euclid(2.0 * std::f32::consts::PI);
+                    let a01 = a / (2.0 * std::f32::consts::PI);
+                    let d = (a01 - az).abs();
+                    d.min(1.0 - d) <= half / (2.0 * std::f32::consts::PI)
+                });
+            }
+        }
         if sel.ids.is_empty() {
             // explicit ids are never truncated; name filters are
             let cap = sel.limit.map(|l| l as usize).unwrap_or(256);
@@ -474,7 +504,6 @@ impl SessionManager {
 
     pub fn step(&self, id: &str, req: StepRequest) -> ApiResult<StepResponse> {
         let steps = req.steps.clamp(1, 10_000);
-        let v_thresh = self.engine_cfg.read().unwrap().v_thresh;
         let snapshot_every = self.snapshot_every;
         let substrate = self.substrate()?.clone();
         let mut sessions = self.sessions.lock().unwrap();
@@ -637,6 +666,7 @@ mod tests {
                 cell_types: vec!["".into()],
                 nt_types: vec!["".into(), "GLUT".into()],
             },
+            weights_f32: false,
         };
         Substrate {
             header,
@@ -647,6 +677,7 @@ mod tests {
             region: vec![1, 2],
             cell_type: vec![0, 0],
             nt_type: vec![1, 1],
+            positions: Vec::new(),
         }
         .into()
     }

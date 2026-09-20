@@ -124,6 +124,7 @@ mod tests {
                     cell_types: vec!["".into()],
                     nt_types: vec!["".into(), "GLUT".into()],
                 },
+                weights_f32: false,
             },
             indptr: vec![0, 1, 1],
             indices: vec![1],
@@ -132,6 +133,7 @@ mod tests {
             region: vec![1, 2],
             cell_type: vec![0, 0],
             nt_type: vec![1, 1],
+            positions: Vec::new(),
         }
     }
 

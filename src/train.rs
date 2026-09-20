@@ -733,6 +733,7 @@ mod learning_tests {
         tables.nt_types.push("acetylcholine".into());
         let header = crate::substrate::FlybinHeader {
             format_version: 1,
+            weights_f32: true,
             n_neurons: 2,
             n_edges: 1,
             source: "test".into(),
@@ -747,6 +748,7 @@ mod learning_tests {
             region: vec![0, 0],
             cell_type: vec![0, 0],
             nt_type: vec![0, 0],
+            positions: Vec::new(),
         }
     }
 

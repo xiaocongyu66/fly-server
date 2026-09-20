@@ -4,6 +4,71 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
+/// Graft soma positions (csv: root_id,x,y,z) onto an existing flybin,
+/// producing a v3 file. The graph stays byte-identical.
+fn cmd_add_positions(args: &[String]) {
+    let mut inp = None;
+    let mut csv = None;
+    let mut outp = None;
+    let mut a = args.iter();
+    while let Some(f) = a.next() {
+        match f.as_str() {
+            "--in" => inp = a.next().cloned(),
+            "--csv" => csv = a.next().cloned(),
+            "--out" => outp = a.next().cloned(),
+            other => {
+                eprintln!("unknown flag {other}; usage: add-positions --in FLYBIN --csv POS.CSV --out OUT.FLYBIN");
+                std::process::exit(2);
+            }
+        }
+    }
+    let (Some(inp), Some(csv), Some(outp)) = (inp, csv, outp) else {
+        eprintln!("usage: add-positions --in FLYBIN --csv POS.CSV --out OUT.FLYBIN");
+        std::process::exit(2);
+    };
+    let mut sub = fly_server::substrate::flybin::read_flybin(std::path::Path::new(&inp))
+        .expect("read flybin");
+    let mut map = std::collections::HashMap::with_capacity(sub.root_ids.len());
+    let content = std::fs::read_to_string(&csv).expect("read csv");
+    for (ln, line) in content.lines().enumerate() {
+        if ln == 0 && line.to_lowercase().contains("root") {
+            continue;
+        }
+        let c: Vec<&str> = line.split(',').collect();
+        if c.len() < 4 {
+            continue;
+        }
+        if let (Ok(id), Ok(x), Ok(y), Ok(z)) = (
+            c[0].trim().parse::<u64>(),
+            c[1].trim().parse::<f32>(),
+            c[2].trim().parse::<f32>(),
+            c[3].trim().parse::<f32>(),
+        ) {
+            map.insert(id, [x, y, z]);
+        }
+    }
+    let mut positions = Vec::with_capacity(sub.root_ids.len() * 3);
+    let mut got = 0usize;
+    for id in &sub.root_ids {
+        match map.get(id) {
+            Some([x, y, z]) => {
+                positions.extend_from_slice(&[*x, *y, *z]);
+                got += 1;
+            }
+            None => positions.extend_from_slice(&[0.0, 0.0, 0.0]),
+        }
+    }
+    sub.positions = positions;
+    fly_server::substrate::flybin::write_flybin(std::path::Path::new(&outp), &sub)
+        .expect("write flybin");
+    println!(
+        "add-positions: {}/{} neurons positioned -> {} (v3)",
+        got,
+        sub.root_ids.len(),
+        outp
+    );
+}
+
 fn main() {
     // the Vulkan loader complains when this is unset (common in proot);
     // point it at a writable runtime dir so wgpu inits cleanly
@@ -14,6 +79,10 @@ fn main() {
     let code = match args.get(1).map(String::as_str) {
         Some("compile-substrate") => cmd_compile(&args[2..]),
         Some("serve") => cmd_serve(&args[2..]),
+        Some("add-positions") => {
+            cmd_add_positions(&args[2..]);
+            0
+        }
         Some("bench") => cmd_bench(&args[2..]),
         Some("--version" | "-V" | "version") => {
             println!("fly-server {}", fly_server::VERSION);

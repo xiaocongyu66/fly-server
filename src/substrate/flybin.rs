@@ -19,16 +19,19 @@ use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 8] = *b"FLYBIN\x01\x00";
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlybinHeader {
     pub format_version: u32,
     pub n_neurons: u32,
     pub n_edges: u64,
     pub source: String,
     pub string_tables: StringTables,
+    /// v3+: weight storage is f32 (else u8 quantized). v1/v2 infer from version.
+    #[serde(default)]
+    pub weights_f32: bool,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct StringTables {
     pub regions: Vec<String>,
     pub cell_types: Vec<String>,
@@ -74,6 +77,8 @@ pub struct Substrate {
     pub region: Vec<u32>,
     pub cell_type: Vec<u32>,
     pub nt_type: Vec<u32>,
+    /// Somatic x/y/z per neuron (v3 only; empty in v1/v2 files).
+    pub positions: Vec<f32>,
 }
 
 impl Substrate {
@@ -105,7 +110,12 @@ impl Substrate {
 
 pub fn write_flybin(path: &std::path::Path, s: &Substrate) -> std::io::Result<()> {
     use std::io::Write;
-    let header_json = serde_json::to_vec(&s.header).map_err(std::io::Error::other)?;
+    let mut header = s.header.clone();
+    if !s.positions.is_empty() && header.format_version < 3 {
+        header.format_version = 3;
+    }
+    header.weights_f32 = matches!(s.weights, Weights::F32(_));
+    let header_json = serde_json::to_vec(&header).map_err(std::io::Error::other)?;
     let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
     out.write_all(&MAGIC)?;
     out.write_all(&(header_json.len() as u32).to_le_bytes())?;
@@ -140,6 +150,11 @@ pub fn write_flybin(path: &std::path::Path, s: &Substrate) -> std::io::Result<()
     }
     for v in &s.nt_type {
         out.write_all(&v.to_le_bytes())?;
+    }
+    if !s.positions.is_empty() {
+        for v in &s.positions {
+            out.write_all(&v.to_le_bytes())?;
+        }
     }
     out.flush()
 }
@@ -180,6 +195,15 @@ pub fn read_flybin(path: &std::path::Path) -> std::io::Result<Substrate> {
             let scale = cast_f32(&read_vec(n * 4)?)?;
             Weights::U8 { w, scale }
         }
+        3 => {
+            if header.weights_f32 {
+                Weights::F32(cast_f32(&read_vec(nnz * 4)?)?)
+            } else {
+                let w = read_vec(nnz)?;
+                let scale = cast_f32(&read_vec(n * 4)?)?;
+                Weights::U8 { w, scale }
+            }
+        }
         v => {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -191,6 +215,11 @@ pub fn read_flybin(path: &std::path::Path) -> std::io::Result<Substrate> {
     let region = cast_u32(&read_vec(n * 4)?)?;
     let cell_type = cast_u32(&read_vec(n * 4)?)?;
     let nt_type = cast_u32(&read_vec(n * 4)?)?;
+    let positions = if header.format_version >= 3 {
+        cast_f32(&read_vec(n * 12)?)?
+    } else {
+        Vec::new()
+    };
 
     Ok(Substrate {
         header,
@@ -201,6 +230,7 @@ pub fn read_flybin(path: &std::path::Path) -> std::io::Result<Substrate> {
         region,
         cell_type,
         nt_type,
+        positions,
     })
 }
 
@@ -243,3 +273,43 @@ macro_rules! impl_le {
 impl_le!(u64);
 impl_le!(u32);
 impl_le!(f32);
+
+#[cfg(test)]
+mod v3_tests {
+    use super::*;
+
+    #[test]
+    fn v3_round_trip_and_v2_compat() {
+        let tables = StringTables {
+            regions: vec!["r".into()],
+            cell_types: vec!["c".into()],
+            nt_types: vec!["n".into()],
+        };
+        let mut header = FlybinHeader {
+            format_version: 3,
+            n_neurons: 2,
+            n_edges: 1,
+            source: "t".into(),
+            string_tables: tables,
+            weights_f32: false,
+        };
+        let _ = &mut header;
+        let sub = Substrate {
+            header,
+            indptr: vec![0, 1, 1],
+            indices: vec![1],
+            weights: Weights::F32(vec![10.0]),
+            root_ids: vec![100, 200],
+            region: vec![0, 0],
+            cell_type: vec![0, 0],
+            nt_type: vec![0, 0],
+            positions: vec![1.0, 2.0, 3.0, -4.0, 5.0, -6.0],
+        };
+        let tmp = std::env::temp_dir().join("flybin_v3_rt.flybin");
+        write_flybin(&tmp, &sub).unwrap();
+        let back = read_flybin(&tmp).unwrap();
+        assert_eq!(back.positions, vec![1.0, 2.0, 3.0, -4.0, 5.0, -6.0]);
+        assert_eq!(back.root_ids, vec![100, 200]);
+        let _ = std::fs::remove_file(&tmp);
+    }
+}

@@ -51,6 +51,10 @@ pub struct NeuronSelector {
     /// Position 0.0-1.0 within the matched set (retinotopic slice start).
     #[serde(default)]
     pub offset: Option<f32>,
+    /// True retinotopy: azimuth 0.0-1.0 around the head center; selects
+    /// neurons whose soma sits at that bearing (needs v3 positions).
+    #[serde(default)]
+    pub retina: Option<f32>,
     #[serde(default)]
     pub limit: Option<u32>,
 }
