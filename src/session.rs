@@ -431,7 +431,16 @@ impl SessionManager {
         if sel.ids.is_empty() {
             // explicit ids are never truncated; name filters are
             let cap = sel.limit.map(|l| l as usize).unwrap_or(256);
-            out.truncate(cap);
+            if let Some(f) = sel.offset {
+                // retinotopy: a contiguous slice of the matched set, starting
+                // at the given fraction — e.g. offset 0.5 = "straight ahead"
+                let f = f.clamp(0.0, 1.0);
+                let start = ((f * out.len() as f32) as usize).min(out.len());
+                let end = (start + cap).min(out.len());
+                out = out[start..end].to_vec();
+            } else {
+                out.truncate(cap);
+            }
         }
         Ok(out)
     }
@@ -482,29 +491,23 @@ impl SessionManager {
             ..
         } = s;
 
-        let mut actions: Vec<Action> = Vec::new();
+        // Motor readout: VNC neurons' firing rate over the whole window.
+        // (Membrane-potential sampling read zero — spiking neurons are
+        // membrane-reset before the view is taken; counts are the signal.)
+        let mut spike_counts: std::collections::HashMap<u32, u32> =
+            std::collections::HashMap::new();
         let mut last_report: Option<TickReport> = None;
         engine.run_ticks(steps, &mut |report, view| {
-            // Motor readout: spiking VNC neurons, rate from membrane potential.
-            actions.clear();
+            let mut tick_vnc: Vec<u64> = Vec::new();
             for &i in view.spikes() {
                 let region = substrate.header.string_tables.regions
                     [substrate.region[i as usize] as usize]
                     .clone();
                 if region.to_lowercase().contains("vnc") {
-                    let rate = (view.membrane(i as usize) / v_thresh).clamp(0.0, 1.0);
-                    actions.push(Action {
-                        neuron_id: substrate.root_ids[i as usize],
-                        rate,
-                    });
+                    *spike_counts.entry(i).or_insert(0) += 1;
+                    tick_vnc.push(substrate.root_ids[i as usize]);
                 }
             }
-            actions.sort_by(|a, b| {
-                b.rate
-                    .partial_cmp(&a.rate)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            actions.truncate(32);
 
             if snapshot_every > 0 && report.tick % snapshot_every == 0 {
                 let blob = view.state_bytes();
@@ -516,13 +519,27 @@ impl SessionManager {
                 tick: report.tick,
                 t_ms: report.t_ms,
                 n_spikes: report.n_spikes,
-                spike_sample: actions.iter().map(|a| a.neuron_id).collect(),
+                spike_sample: tick_vnc,
             };
             subscribers.retain(|tx| tx.send(event.clone()).is_ok());
             last_report = Some(report.clone());
         });
         let report = last_report.ok_or_else(|| ApiError::internal("no tick executed"))?;
         usage.ticks_simulated += steps as u64;
+
+        let mut actions: Vec<Action> = spike_counts
+            .into_iter()
+            .map(|(i, c)| Action {
+                neuron_id: substrate.root_ids[i as usize],
+                rate: ((c as f32) / (steps as f32)).min(1.0),
+            })
+            .collect();
+        actions.sort_by(|a, b| {
+            b.rate
+                .partial_cmp(&a.rate)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        actions.truncate(32);
 
         let body = serde_json::json!({"tick": report.tick, "n_spikes": report.n_spikes, "actions": actions});
         log.append(id, "step", report.tick, body);

@@ -505,6 +505,12 @@ fn route_authed(
                 };
                 let current = b.get("current").and_then(|v| v.as_f64()).unwrap_or(30.0) as f32;
                 let steps = b.get("steps").and_then(|v| v.as_u64()).unwrap_or(100) as u32;
+                eprintln!(
+                    "[access] POST /v1/chat_simulate target={} current={} steps={}",
+                    serde_json::to_string(&target).unwrap_or_default(),
+                    current,
+                    steps
+                );
                 match mgr.chat_simulate(&target, current, steps) {
                     Ok(v) => json_ok(v),
                     Err(e) => json_err(&e),
@@ -607,6 +613,43 @@ fn route_authed(
             Ok(rx) => sse_bridge(rx),
             Err(e) => json_err(&e),
         },
+        ("GET", ["v1", "sessions", id, "ws"]) => {
+            // WebSocket upgrade: first HTTP handshake, then a live frame
+            // stream of per-tick activity for the session.
+            let key = req
+                .headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("sec-websocket-key"))
+                .map(|(_, v)| v.clone());
+            let upgrade = req.headers.iter().any(|(k, v)| {
+                k.eq_ignore_ascii_case("upgrade") && v.eq_ignore_ascii_case("websocket")
+            });
+            match (key, mgr.subscribe(id)) {
+                (Some(k), Ok(rx)) if upgrade => {
+                    const GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+                    let digest = crate::api::http::sha1(format!("{k}{GUID}").as_bytes());
+                    let accept = crate::api::http::b64(&digest);
+                    let (tx, out) = mpsc::channel();
+                    std::thread::spawn(move || {
+                        for ev in rx {
+                            if serde_json::to_string(&ev)
+                                .map(|s| tx.send(s).is_err())
+                                .unwrap_or(true)
+                            {
+                                break;
+                            }
+                        }
+                    });
+                    HttpResponse::ws(out, accept)
+                }
+                (_, Ok(_)) => json_err(&ApiError::invalid_request(
+                    "not_upgrade",
+                    "expected WebSocket upgrade headers",
+                    None,
+                )),
+                (_, Err(e)) => json_err(&e),
+            }
+        }
 
         _ => HttpResponse::not_found_json(),
     }

@@ -18,12 +18,15 @@ pub struct HttpRequest {
 pub enum Body {
     Bytes(Vec<u8>),
     Sse(mpsc::Receiver<String>),
+    Ws(mpsc::Receiver<String>),
 }
 
 pub struct HttpResponse {
     pub status: u16,
     pub content_type: &'static str,
     pub body: Body,
+    /// Sec-WebSocket-Accept for 101 upgrades (Body::Ws only).
+    pub ws_accept: Option<String>,
 }
 
 impl HttpResponse {
@@ -32,6 +35,7 @@ impl HttpResponse {
             status,
             content_type: "application/json",
             body: Body::Bytes(json.into_bytes()),
+            ws_accept: None,
         }
     }
 
@@ -40,6 +44,17 @@ impl HttpResponse {
             status: 200,
             content_type: "text/event-stream",
             body: Body::Sse(rx),
+            ws_accept: None,
+        }
+    }
+
+    /// 101 Switching Protocols + frame stream from `rx` (one JSON per text frame).
+    pub fn ws(rx: mpsc::Receiver<String>, accept: String) -> Self {
+        Self {
+            status: 101,
+            content_type: "application/json",
+            body: Body::Ws(rx),
+            ws_accept: Some(accept),
         }
     }
 
@@ -134,12 +149,14 @@ pub fn serve_static(root: &std::path::Path, path: &str) -> Option<HttpResponse> 
             status: 200,
             content_type: mime_of(&full.to_string_lossy()),
             body: Body::Bytes(bytes),
+            ws_accept: None,
         }),
         Err(_) => {
             // SPA fallback: client-side routes resolve to index.html
             std::fs::read(root.join("index.html"))
                 .ok()
                 .map(|bytes| HttpResponse {
+                    ws_accept: None,
                     status: 200,
                     content_type: "text/html; charset=utf-8",
                     body: Body::Bytes(bytes),
@@ -210,8 +227,110 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<HttpRequest>> 
     }))
 }
 
+/// Minimal SHA-1 (WS handshake only).
+pub(crate) fn sha1(data: &[u8]) -> [u8; 20] {
+    let mut h: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
+    let mut msg = data.to_vec();
+    let bit_len = (data.len() as u64) * 8;
+    msg.push(0x80);
+    while msg.len() % 64 != 56 {
+        msg.push(0);
+    }
+    msg.extend_from_slice(&bit_len.to_be_bytes());
+    for chunk in msg.chunks(64) {
+        let mut w = [0u32; 80];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes(chunk[i * 4..i * 4 + 4].try_into().unwrap());
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+        let (mut a, mut b, mut c, mut d, mut e) = (h[0], h[1], h[2], h[3], h[4]);
+        for (i, &wi) in w.iter().enumerate() {
+            let (f, k) = match i {
+                0..=19 => ((b & c) | ((!b) & d), 0x5A827999u32),
+                20..=39 => (b ^ c ^ d, 0x6ED9EBA1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
+                _ => (b ^ c ^ d, 0xCA62C1D6),
+            };
+            let tmp = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(wi);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = tmp;
+        }
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+    }
+    let mut out = [0u8; 20];
+    for (i, v) in h.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&v.to_be_bytes());
+    }
+    out
+}
+
+const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+pub(crate) fn b64(data: &[u8]) -> String {
+    let mut out = String::new();
+    for c in data.chunks(3) {
+        let b = [c[0], *c.get(1).unwrap_or(&0), *c.get(2).unwrap_or(&0)];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        out.push(B64[(n >> 18) as usize & 63] as char);
+        out.push(B64[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 {
+            B64[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if c.len() > 2 {
+            B64[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
 fn write_response(stream: &mut TcpStream, resp: &HttpResponse) -> std::io::Result<()> {
     match &resp.body {
+        Body::Ws(rx) => {
+            let accept = resp.ws_accept.clone().unwrap_or_default();
+            let head = format!(
+                "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
+            );
+            stream.write_all(head.as_bytes())?;
+            stream.flush()?;
+            // server->client text frames: FIN|opcode 0x81, no mask
+            for msg in rx {
+                let payload = msg.as_bytes();
+                let mut frame = vec![0x81u8];
+                let len = payload.len();
+                if len < 126 {
+                    frame.push(len as u8);
+                } else if len <= u16::MAX as usize {
+                    frame.push(126);
+                    frame.extend_from_slice(&(len as u16).to_be_bytes());
+                } else {
+                    frame.push(127);
+                    frame.extend_from_slice(&(len as u64).to_be_bytes());
+                }
+                frame.extend_from_slice(payload);
+                if stream.write_all(&frame).is_err() {
+                    break;
+                }
+                stream.flush().ok();
+            }
+            Ok(())
+        }
         Body::Bytes(b) => {
             let head = format!(
                 "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",

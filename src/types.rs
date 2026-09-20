@@ -48,6 +48,9 @@ pub struct NeuronSelector {
     pub cell_type: Option<String>,
     #[serde(default)]
     pub nt_type: Option<String>,
+    /// Position 0.0-1.0 within the matched set (retinotopic slice start).
+    #[serde(default)]
+    pub offset: Option<f32>,
     #[serde(default)]
     pub limit: Option<u32>,
 }
