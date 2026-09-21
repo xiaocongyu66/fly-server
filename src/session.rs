@@ -284,6 +284,7 @@ impl SessionManager {
                 &sid,
                 crate::types::ObserveRequest {
                     modality: "visual".into(),
+                    frame: Vec::new(),
                     target: target.clone(),
                     current,
                     duration_ticks: 1,
@@ -499,6 +500,35 @@ impl SessionManager {
         let s = sessions
             .get_mut(id)
             .ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
+        // multi-column visual frame: one call, many retinal slices —
+        // each column resolved + injected at its own current
+        if !req.frame.is_empty() {
+            let mut cols: Vec<(Vec<u32>, f32)> = Vec::with_capacity(req.frame.len());
+            for col in &req.frame {
+                let mut sel = req.target.clone();
+                sel.retina = Some(col.az.clamp(0.0, 1.0));
+                let idx = self.resolve_selector(&sel)?;
+                cols.push((idx, col.current));
+            }
+            let mut sessions = self.sessions.lock().unwrap();
+            let s = sessions
+                .get_mut(id)
+                .ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
+            let mut total = 0usize;
+            for (idx, cur) in &cols {
+                total += idx.len();
+                s.engine.inject(idx, *cur);
+            }
+            let tick = s.engine.tick_count();
+            let body = serde_json::json!({
+                "modality": "retina_frame",
+                "columns": req.frame.len(),
+                "n_neurons_stimulated": total,
+            });
+            let item = s.log.append(id, "observe", tick, body);
+            s.log.cap(self.max_items_per_session);
+            return Ok(item);
+        }
         let idx = self.resolve_selector(&req.target)?;
         if idx.is_empty() {
             return Err(ApiError::invalid_request(
@@ -729,6 +759,7 @@ mod tests {
             .observe(
                 &sid,
                 ObserveRequest {
+                    frame: Vec::new(),
                     modality: "current".into(),
                     target: NeuronSelector {
                         ids: vec![100],

@@ -61,8 +61,21 @@ pub struct NeuronSelector {
 
 // ---------- observe / step ----------
 
+/// One azimuth slice of a visual frame (llama.cpp mtmd-style: frame →
+/// patches → per-patch injection, here into optic-lobe columns).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RetinaColumn {
+    /// Azimuth 0.0-1.0 (0 = +x axis, clockwise seen from +y).
+    pub az: f32,
+    /// Injected current for this column's neurons.
+    pub current: f32,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ObserveRequest {
+    /// Visual frame: multiple azimuth columns injected in one call.
+    #[serde(default)]
+    pub frame: Vec<RetinaColumn>,
     /// "current" | "pain" | "reward" — semantic tag recorded in the item log;
     /// current source is the same, pain/reward may later map to modulatory neurons.
     pub modality: String,

@@ -101,6 +101,7 @@ fn run_episode(mgr: &SessionManager, cfg: &TrainConfig, episode: u32) -> Result<
 
     let observe = ObserveRequest {
         modality: "current".to_string(),
+        frame: Vec::new(),
         target: NeuronSelector {
             region: Some(region),
             ..Default::default()
@@ -382,6 +383,7 @@ impl crate::session::SessionManager {
                     &sid,
                     ObserveRequest {
                         modality: "current".into(),
+                        frame: Vec::new(),
                         target: crate::types::NeuronSelector {
                             region: Some(region.clone()),
                             ..Default::default()
