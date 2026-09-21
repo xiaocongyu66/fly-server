@@ -575,6 +575,26 @@ fn route_authed(
             Ok(()) => json_ok(serde_json::json!({"deleted": true, "id": id})),
             Err(e) => json_err(&e),
         },
+        ("POST", ["v1", "sessions", id, "reward"]) => {
+            #[derive(serde::Serialize)]
+            struct RewardResp {
+                session_id: String,
+                #[serde(flatten)]
+                body: serde_json::Value,
+            }
+            with_body(req, |b: serde_json::Value| {
+                let reward = b.get("reward").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                let tag = b
+                    .get("tag")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unspecified")
+                    .to_string();
+                mgr.reward(id, reward, &tag).map(|body| RewardResp {
+                    session_id: id.to_string(),
+                    body,
+                })
+            })
+        }
         ("POST", ["v1", "sessions", id, "observe"]) => {
             with_body(req, |b: ObserveRequest| mgr.observe(id, b))
         }

@@ -57,6 +57,8 @@ pub struct SessionState {
     pub log: items::ItemLog,
     pub usage: Usage,
     pub subscribers: Vec<std::sync::mpsc::Sender<ActivityEvent>>,
+    /// Game-feedback reward accumulated since the last step (R-STDP).
+    pub pending_reward: f32,
 }
 
 pub struct SessionManager {
@@ -374,6 +376,7 @@ impl SessionManager {
             log: items::ItemLog::new(),
             usage: Usage::default(),
             subscribers: Vec::new(),
+            pending_reward: 0.0,
         };
         let obj = Self::to_object(&state, &req.adapters);
         self.sessions.lock().unwrap().insert(id, state);
@@ -574,6 +577,30 @@ impl SessionManager {
         Ok(item)
     }
 
+    /// Game feedback: accumulate reward applied to R-STDP on the next step.
+    /// Positive = good (approach success), negative = bad (damage).
+    pub fn reward(&self, id: &str, reward: f32, tag: &str) -> ApiResult<serde_json::Value> {
+        let mut sessions = self.sessions.lock().unwrap();
+        let s = sessions
+            .get_mut(id)
+            .ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
+        if s.engine.learning.is_none() {
+            let cfg = self.engine_cfg.read().unwrap().clone();
+            let _ = cfg;
+            s.engine.learning = Some(crate::engine::LearningState {
+                lr: 0.02,
+                window: 20,
+                tau: 50.0,
+                reward: 0.0,
+            });
+        }
+        s.pending_reward += reward.clamp(-10.0, 10.0);
+        let tick = s.engine.tick_count();
+        let body = serde_json::json!({"reward": reward, "tag": tag, "pending": s.pending_reward});
+        let _ = s.log.append(id, "reward", tick, body.clone());
+        Ok(body)
+    }
+
     pub fn step(&self, id: &str, req: StepRequest) -> ApiResult<StepResponse> {
         let steps = req.steps.clamp(1, 10_000);
         let snapshot_every = self.snapshot_every;
@@ -589,8 +616,15 @@ impl SessionManager {
             log,
             usage,
             subscribers,
+            pending_reward,
             ..
         } = s;
+        if *pending_reward != 0.0 {
+            if let Some(ls) = engine.learning.as_mut() {
+                ls.reward += *pending_reward;
+            }
+            *pending_reward = 0.0;
+        }
 
         // Motor readout: VNC neurons' firing rate over the whole window.
         // (Membrane-potential sampling read zero — spiking neurons are
