@@ -517,9 +517,30 @@ impl SessionManager {
                 .get_mut(id)
                 .ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
             let mut total = 0usize;
-            for (idx, cur) in &cols {
-                total += idx.len();
-                s.engine.inject(idx, *cur);
+            let positioned = !self
+                .substrate
+                .read()
+                .unwrap()
+                .as_ref()
+                .map(|sp| sp.positions.is_empty())
+                .unwrap_or(true);
+            if !positioned {
+                // no coordinates: every column resolves to the same neurons,
+                // and inject is additive — collapse to one max-current shot
+                // instead of stacking the frame onto itself
+                let max_cur = cols
+                    .iter()
+                    .map(|(_, c)| *c)
+                    .fold(f32::NEG_INFINITY, f32::max);
+                if let Some((idx, _)) = cols.iter().max_by_key(|(_, c)| c.to_bits()) {
+                    total = idx.len();
+                    s.engine.inject(idx, max_cur);
+                }
+            } else {
+                for (idx, cur) in &cols {
+                    total += idx.len();
+                    s.engine.inject(idx, *cur);
+                }
             }
             let tick = s.engine.tick_count();
             let body = serde_json::json!({
