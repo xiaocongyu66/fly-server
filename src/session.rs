@@ -433,13 +433,25 @@ impl SessionManager {
             if sel.ids.is_empty() {
                 let az = az.clamp(0.0, 1.0);
                 let n = sub.positions.len() / 3;
+                // head center over POSITIONED neurons only — [0,0,0]
+                // placeholders (unlocated somas) would drag it to the origin
                 let (mut cx, mut cz) = (0.0f32, 0.0f32);
+                let mut cnt = 0usize;
                 for i in 0..n {
-                    cx += sub.positions[i * 3];
-                    cz += sub.positions[i * 3 + 2];
+                    let (x, z) = (sub.positions[i * 3], sub.positions[i * 3 + 2]);
+                    if x == 0.0 && z == 0.0 {
+                        continue;
+                    }
+                    cx += x;
+                    cz += z;
+                    cnt += 1;
                 }
-                cx /= n as f32;
-                cz /= n as f32;
+                if cnt == 0 {
+                    // no positioned neurons: retina filter is meaningless
+                    return Ok(Vec::new());
+                }
+                cx /= cnt as f32;
+                cz /= cnt as f32;
                 let half = std::f32::consts::PI / 16.0; // ±11.25° window
                 out.retain(|&i| {
                     let (x, z) = (
