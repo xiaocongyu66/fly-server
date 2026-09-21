@@ -312,6 +312,10 @@ impl SessionManager {
     /// Hot-swap the loaded substrate: replace the model atomically and
     /// clear all sessions (their engine state belongs to the old model).
     pub fn reload_substrate(&self, new_substrate: Arc<Substrate>, new_id: String) -> usize {
+        // lock order must match observe/step (sessions -> substrate): taking
+        // substrate.write first could deadlock a concurrent drive waiting on
+        // substrate.read while we wait for its sessions lock
+        let mut sessions = self.sessions.lock().unwrap();
         {
             let mut sub = self.substrate.write().unwrap();
             *sub = Some(new_substrate);
@@ -320,7 +324,6 @@ impl SessionManager {
             let mut id = self.substrate_id.write().unwrap();
             *id = new_id;
         }
-        let mut sessions = self.sessions.lock().unwrap();
         let cleared = sessions.len();
         sessions.clear();
         cleared
