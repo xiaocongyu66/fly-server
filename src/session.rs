@@ -450,6 +450,7 @@ impl SessionManager {
                     // no positioned neurons: retina filter is meaningless
                     return Ok(Vec::new());
                 }
+                let pre_retina_len = out.len();
                 cx /= cnt as f32;
                 cz /= cnt as f32;
                 let half = std::f32::consts::PI / 16.0; // ±11.25° window
@@ -468,6 +469,12 @@ impl SessionManager {
                     let d = (a01 - az).abs();
                     d.min(1.0 - d) <= half / (2.0 * std::f32::consts::PI)
                 });
+                if out.is_empty() && pre_retina_len > 0 {
+                    // anatomical blind spot (no somas at this bearing): fall
+                    // back to diffuse light — real compound eyes have broad,
+                    // overlapping receptive fields, seeing SOMETHING
+                    out = sub.select(sel).map_err(selector_unknown_error)?;
+                }
             }
         }
         if sel.ids.is_empty() {
