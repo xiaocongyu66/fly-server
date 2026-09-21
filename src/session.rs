@@ -510,7 +510,6 @@ impl SessionManager {
                 let idx = self.resolve_selector(&sel)?;
                 cols.push((idx, col.current));
             }
-            let mut sessions = self.sessions.lock().unwrap();
             let s = sessions
                 .get_mut(id)
                 .ok_or_else(|| ApiError::not_found(format!("session `{id}` not found")))?;
